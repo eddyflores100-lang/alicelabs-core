@@ -1,6 +1,13 @@
 //! Provider-neutral model gateway adapters.
 //! API credentials are supplied at runtime and are never serialized by this crate.
 
+pub mod routing;
+
+pub use routing::{
+    select_model, ModelCandidate, RouteDecision, RoutingError, RoutingStrategy, TaskComplexity,
+    TaskRequirements,
+};
+
 use async_trait::async_trait;
 use reqwest::{header, Client, StatusCode};
 use serde::{Deserialize, Serialize};

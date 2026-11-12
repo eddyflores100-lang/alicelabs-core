@@ -12,7 +12,7 @@ AliceLabs Core is a cross-platform, local-first, provider-agnostic AI developmen
 - Editor: Monaco (embedded editor surface; filesystem-backed workspace integration is next)
 - Core: Rust modular daemon
 - Persistence: SQLite (versioned schema v1, project metadata and provider-account references)
-- Model routing: hybrid (manual, recommended, automatic — routing engine is next)
+- Model routing: hybrid (manual, recommended, automatic — scoring engine v1 implemented)
 - Integrations: global bridge with project-scoped permissions
 - Development: complete product delivered incrementally
 
@@ -22,14 +22,14 @@ AliceLabs Core is a cross-platform, local-first, provider-agnostic AI developmen
 - `crates/core-daemon`: local daemon and health API
 - `crates/core-protocol`: versioned IPC/event contracts
 - `crates/core-storage`: SQLite schema migrations and metadata repository
-- `crates/core-provider`: provider-neutral chat contract, OpenAI-compatible and Anthropic adapters
+- `crates/core-provider`: provider-neutral chat contract, API adapters and deterministic model selector
 - `schemas/*`: machine-readable contracts
 - `docs/*`: architecture, ADRs, security and roadmap
 
 ## Current status
-The desktop UI and Monaco editor surface build successfully. The Rust workspace passes formatting, tests and Clippy in GitHub Actions. Provider adapters implement HTTP requests for Anthropic Messages and OpenAI Chat Completions-compatible endpoints (including configurable gateways such as OpenRouter). Credentials are passed to adapter instances at runtime; this crate does not persist them.
+The desktop UI and Monaco editor surface build successfully. The Rust workspace passes formatting, tests and Clippy in GitHub Actions. Provider adapters implement HTTP requests for Anthropic Messages and OpenAI Chat Completions-compatible endpoints (including configurable gateways such as OpenRouter). A deterministic model selector filters by capabilities and context window, then scores eligible models by cost, latency and quality according to task complexity. Credentials are passed to adapter instances at runtime; this crate does not persist them.
 
-This is an active foundation, not a finished IDE. The editor currently edits an in-memory sample buffer rather than files on disk. Workspace filesystem access, OS credential-vault integration, provider account management, model routing, real agent execution, MCP transport, tool permissions, and desktop packaging remain planned work. SQLite v1 currently stores project metadata and opaque provider credential references; it never stores API key values.
+This is an active foundation, not a finished IDE. The editor currently edits an in-memory sample buffer rather than files on disk. Workspace filesystem access, OS credential-vault integration, provider account management, wiring the routing selector into live provider sessions, real agent execution, MCP transport, tool permissions, and desktop packaging remain planned work. SQLite v1 currently stores project metadata and opaque provider credential references; it never stores API key values.
 
 ## Development prerequisites
 - Node.js LTS
