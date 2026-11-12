@@ -5,8 +5,8 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 127.0.0.1",
-    "build": "tsc --noEmit && vite build",
+    "dev": "node scripts/copy-monaco.mjs && vite --host 127.0.0.1",
+    "build": "node scripts/copy-monaco.mjs && tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "tauri": "tauri"
   },
@@ -14,6 +14,7 @@
     "@monaco-editor/react": "^4.7.0",
     "@tauri-apps/api": "^2.0.0",
     "lucide-react": "^0.468.0",
+    "monaco-editor": "^0.57.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "zustand": "^5.0.0"

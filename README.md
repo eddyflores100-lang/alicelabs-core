@@ -25,7 +25,7 @@ See [GitHub App setup](apps/desktop/GITHUB_APP_SETUP.md) and [the environment te
 ## Current implementation
 - Blue editor-first desktop shell; no seeded projects or fake agent records.
 - GitHub App Device Flow UI and per-user repository discovery.
-- Repository tree browsing and remote file preview in Monaco.
+- Repository tree browsing and remote file preview in Monaco; editor runtime and workers are copied into the app locally instead of relying on a CDN.
 - Multiple editor tabs, activity rail, assistant panel and bottom panel.
 - New-window action for Tauri desktop builds.
 - Provider-neutral Anthropic and OpenAI-compatible API adapters.

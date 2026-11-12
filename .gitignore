@@ -1,5 +1,6 @@
 node_modules/
 dist/
+apps/desktop/public/vs/
 target/
 .env
 .env.*
