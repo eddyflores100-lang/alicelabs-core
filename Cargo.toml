@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/core-domain",
+  "crates/core-protocol",
+  "crates/core-storage",
+  "crates/core-daemon",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "UNLICENSED"
+repository = "https://github.com/eddyflores100-lang/alicelabs-core"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "net"] }
+uuid = { version = "1", features = ["v4", "serde"] }

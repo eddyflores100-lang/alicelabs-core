@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://alicelabs.site/core/schemas/agent-profile.schema.json",
+  "title": "Core Agent Profile",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "role",
+    "model",
+    "tools",
+    "permissions"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "type": "string"
+    },
+    "role": {
+      "type": "string"
+    },
+    "model": {
+      "type": "object",
+      "required": [
+        "strategy"
+      ],
+      "properties": {
+        "strategy": {
+          "enum": [
+            "manual",
+            "recommended",
+            "automatic"
+          ]
+        },
+        "provider_id": {
+          "type": "string"
+        },
+        "model_id": {
+          "type": "string"
+        }
+      }
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "properties": {
+        "filesystem_scope": {
+          "enum": [
+            "project_only",
+            "explicit_paths",
+            "none"
+          ]
+        },
+        "network": {
+          "enum": [
+            "none",
+            "restricted",
+            "approved_hosts",
+            "unrestricted"
+          ]
+        },
+        "approval_required_for": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

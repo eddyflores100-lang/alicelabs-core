@@ -1,0 +1,11 @@
+{
+  "name": "alicelabs-core",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.0.0",
+  "scripts": {
+    "dev": "pnpm --filter @core/desktop dev",
+    "build": "pnpm --filter @core/desktop build",
+    "typecheck": "pnpm --recursive typecheck"
+  }
+}

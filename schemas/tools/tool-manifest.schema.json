@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://alicelabs.site/core/schemas/tool-manifest.schema.json",
+  "title": "Core Tool Manifest",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "transport",
+    "capabilities"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "transport": {
+      "enum": [
+        "mcp_stdio",
+        "mcp_http",
+        "rest",
+        "graphql",
+        "cli",
+        "native"
+      ]
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "required_scopes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}

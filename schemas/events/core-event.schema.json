@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://alicelabs.site/core/schemas/core-event.schema.json",
+  "title": "Core Event",
+  "type": "object",
+  "required": [
+    "type",
+    "payload"
+  ],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": [
+        "daemon_ready",
+        "agent_state_changed",
+        "task_progress",
+        "approval_required",
+        "provider_status_changed"
+      ]
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}
