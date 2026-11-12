@@ -44,11 +44,10 @@ impl SqliteStore {
                 ",
             )?;
 
-            let current: Option<i64> = tx.query_row(
-                "SELECT MAX(version) FROM schema_migrations",
-                [],
-                |row| row.get(0),
-            )?;
+            let current: Option<i64> =
+                tx.query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                    row.get(0)
+                })?;
 
             if current.unwrap_or_default() < SCHEMA_VERSION {
                 tx.execute_batch(
@@ -130,9 +129,9 @@ impl SqliteStore {
     }
 
     pub fn list_projects(&self) -> Result<Vec<StoredProject>, StorageError> {
-        let mut statement = self.connection.prepare(
-            "SELECT id, name, root_path FROM projects ORDER BY created_at, id",
-        )?;
+        let mut statement = self
+            .connection
+            .prepare("SELECT id, name, root_path FROM projects ORDER BY created_at, id")?;
         let rows = statement.query_map([], |row| {
             Ok(StoredProject {
                 id: row.get(0)?,
@@ -141,7 +140,8 @@ impl SqliteStore {
             })
         })?;
 
-        rows.collect::<Result<Vec<_>, _>>().map_err(StorageError::from)
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StorageError::from)
     }
 
     /// Stores only an opaque operating-system vault reference, never a provider secret.
