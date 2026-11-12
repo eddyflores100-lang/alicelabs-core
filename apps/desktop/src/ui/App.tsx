@@ -13,16 +13,10 @@ type OpenFile = { path:string; name:string; content:string; sha:string; language
 type GitHubUser = { login:string; avatar_url:string; name:string|null };
 
 function apiHeaders(token:string) { return { Accept:"application/vnd.github+json", Authorization:"Bearer "+token, "X-GitHub-Api-Version":"2022-11-28" }; }
-async function fetchAllRepositories(token:string):Promise<Repo[]> {
-  const all:Repo[]=[];
-  for(let page=1;page<=50;page++){
-    const response=await fetch(API+"/user/repos?sort=updated&per_page=100&affiliation=owner,collaborator,organization_member&page="+page,{headers:apiHeaders(token)});
-    if(!response.ok){const body=await response.json().catch(()=>({}));throw new Error(body.message||"Could not load GitHub repositories.");}
-    const batch=await response.json() as Repo[];
-    all.push(...batch);
-    if(batch.length<100)break;
-  }
-  return all;
+async function fetchRepositoryPage(token:string,page:number):Promise<Repo[]> {
+  const response=await fetch(API+"/user/repos?sort=updated&per_page=100&affiliation=owner,collaborator,organization_member&page="+page,{headers:apiHeaders(token)});
+  if(!response.ok){const body=await response.json().catch(()=>({}));throw new Error(body.message||"Could not load GitHub repositories.");}
+  return await response.json() as Repo[];
 }
 function languageFor(path:string) {
   const ext=path.split(".").pop()?.toLowerCase();
@@ -46,6 +40,8 @@ export function App() {
   const [token,setToken]=useState("");
   const [user,setUser]=useState<GitHubUser|null>(null);
   const [repos,setRepos]=useState<Repo[]>([]);
+  const [repoPage,setRepoPage]=useState(1);
+  const [hasMoreRepos,setHasMoreRepos]=useState(false);
   const [repoFilter,setRepoFilter]=useState("");
   const [selectedRepo,setSelectedRepo]=useState<Repo|null>(null);
   const [tree,setTree]=useState<TreeItem[]>([]);
@@ -74,8 +70,8 @@ export function App() {
   const loadRepositories=useCallback(async()=>{
     setBusy("repos");setError("");
     try {
-      const results=await Promise.all([githubRequest("/user"),fetchAllRepositories(token)]);
-      setUser(results[0] as GitHubUser);setRepos(results[1]);
+      const results=await Promise.all([githubRequest("/user"),fetchRepositoryPage(token,1)]);
+      setUser(results[0] as GitHubUser);setRepos(results[1]);setRepoPage(1);setHasMoreRepos(results[1].length===100);
     } catch(e){setError(e instanceof Error?e.message:"Could not load repositories.");}
     finally{setBusy("");}
   },[githubRequest,token]);
@@ -107,13 +103,23 @@ export function App() {
       const profileResponse=await fetch(API+"/user",{headers:h});
       if(!profileResponse.ok)throw new Error("Token received, but the GitHub profile could not be loaded.");
       const profile=await profileResponse.json();
-      const loadedRepos=await fetchAllRepositories(data.access_token);
-      setUser(profile);setRepos(loadedRepos);
+      const loadedRepos=await fetchRepositoryPage(data.access_token,1);
+      setUser(profile);setRepos(loadedRepos);setRepoPage(1);setHasMoreRepos(loadedRepos.length===100);
     }catch(e){setError(e instanceof Error?e.message:"Could not verify authorization.");}
     finally{setBusy("");}
   }
 
-  function disconnectGitHub(){setToken("");setUser(null);setRepos([]);setSelectedRepo(null);setTree([]);setOpenFiles([]);setActivePath("");setDeviceFlow(null);}
+  function disconnectGitHub(){setToken("");setUser(null);setRepos([]);setRepoPage(1);setHasMoreRepos(false);setSelectedRepo(null);setTree([]);setOpenFiles([]);setActivePath("");setDeviceFlow(null);}
+  async function loadMoreRepositories(){
+    if(!token||!hasMoreRepos||busy==="more")return;
+    setBusy("more");setError("");
+    try{
+      const nextPage=repoPage+1;
+      const batch=await fetchRepositoryPage(token,nextPage);
+      setRepos(current=>[...current,...batch]);setRepoPage(nextPage);setHasMoreRepos(batch.length===100);
+    }catch(e){setError(e instanceof Error?e.message:"Could not load more repositories.");}
+    finally{setBusy("");}
+  }
 
   async function selectRepository(repo:Repo){
     setSelectedRepo(repo);setOpenFiles([]);setActivePath("");setTree([]);setExpanded(new Set([""]));setBusy("tree");setError("");
@@ -199,6 +205,8 @@ export function App() {
           <div className="repo-count">{filteredRepos.length} REPOSITORIES <button onClick={loadRepositories} title="Refresh"><RefreshCw size={12}/></button></div>
           {GITHUB_APP_INSTALL_URL&&<a className="install-link manage-install" href={GITHUB_APP_INSTALL_URL} target="_blank" rel="noreferrer">Manage GitHub App access <ExternalLink size={11}/></a>}
           <div className="repo-list">{filteredRepos.map(repo=><button key={repo.id} className={selectedRepo?.id===repo.id?"repo-entry active":"repo-entry"} onClick={()=>selectRepository(repo)}><FolderGit2 size={15}/><span className="repo-entry-text"><strong>{repo.name}</strong><small>{repo.full_name}</small></span><span className={repo.private?"private-dot":"public-dot"} title={repo.private?"Private":"Public"}/></button>)}{filteredRepos.length===0&&<div className="empty-small">{repos.length?"No repositories match your search.":"No repositories available to this GitHub App. Install it on an account or organization and grant repository access."}{repos.length===0&&GITHUB_APP_INSTALL_URL&&<a className="install-link" href={GITHUB_APP_INSTALL_URL} target="_blank" rel="noreferrer">Install AliceLabs Core <ExternalLink size={11}/></a>}</div>}</div>
+          {hasMoreRepos&&<button className="load-more" onClick={loadMoreRepositories} disabled={busy==="more"}>{busy==="more"?"Loading…":"Load more repositories"}</button>}
+          {error&&<div className="inline-error side-error">{error}</div>}
         </>)}
         {leftMode==="search"&&<div className="search-pane"><Search size={22}/><p>Filter files in the opened repository.</p><input value={fileQuery} onChange={e=>setFileQuery(e.target.value)} placeholder="Filter file paths…"/></div>}
         {leftMode==="source"&&<div className="search-pane"><GitBranch size={22}/><p>Source control for the selected repository.</p><small>{selectedRepo?"Branch: "+selectedRepo.default_branch:"Select a GitHub repository to inspect source."}</small></div>}
