@@ -149,10 +149,7 @@ fn normalize_lower_is_better(value: f64, minimum: f64, maximum: f64) -> f64 {
     }
 }
 
-fn weights(
-    strategy: RoutingStrategy,
-    complexity: TaskComplexity,
-) -> (f64, f64, f64) {
+fn weights(strategy: RoutingStrategy, complexity: TaskComplexity) -> (f64, f64, f64) {
     match strategy {
         RoutingStrategy::LowestCost => (0.10, 0.10, 0.80),
         RoutingStrategy::LowestLatency => (0.10, 0.80, 0.10),
