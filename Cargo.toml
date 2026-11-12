@@ -5,6 +5,7 @@ members = [
   "crates/core-protocol",
   "crates/core-storage",
   "crates/core-daemon",
+  "crates/core-provider",
 ]
 
 [workspace.package]
@@ -14,6 +15,8 @@ license = "UNLICENSED"
 repository = "https://github.com/eddyflores100-lang/alicelabs-core"
 
 [workspace.dependencies]
+async-trait = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
