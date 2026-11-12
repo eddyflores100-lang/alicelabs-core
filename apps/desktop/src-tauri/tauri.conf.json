@@ -15,12 +15,12 @@
         "title": "AliceLabs Core",
         "width": 1440,
         "height": 900,
-        "minWidth": 1000,
-        "minHeight": 650
+        "minWidth": 980,
+        "minHeight": 620
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src ipc: http://ipc.localhost ws://127.0.0.1:* http://127.0.0.1:*"
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: https://avatars.githubusercontent.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src ipc: http://ipc.localhost ws://127.0.0.1:* http://127.0.0.1:* https://github.com https://api.github.com https://raw.githubusercontent.com"
     }
   },
   "bundle": {

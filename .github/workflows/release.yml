@@ -1,0 +1,67 @@
+name: Desktop Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            name: Linux
+          - platform: windows-latest
+            name: Windows
+          - platform: macos-latest
+            name: macOS
+    runs-on: ${{ matrix.platform }}
+    env:
+      VITE_GITHUB_CLIENT_ID: ${{ vars.GITHUB_APP_CLIENT_ID }}
+      VITE_GITHUB_APP_INSTALL_URL: ${{ vars.GITHUB_APP_INSTALL_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev libwebkit2gtk-4.1-dev
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and publish desktop bundle
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: AliceLabs Core ${{ github.ref_name }}
+          releaseBody: |
+            AliceLabs Core desktop release.
+
+            Review the changelog and verify the platform-specific installer before installation.
+          releaseDraft: true
+          prerelease: false

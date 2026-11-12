@@ -1,57 +1,55 @@
 # AliceLabs Core
 
-**One IDE. Every Model. Every Agent. Every Tool.**
+**A universal, local-first AI IDE. Every model. Every agent. Every tool.**
 
-AliceLabs Core is a cross-platform, local-first, provider-agnostic AI development environment. The repository is a modular monorepo with a Tauri desktop shell, a Rust core daemon, a Monaco editor surface, provider adapters, versioned contracts, and architecture documentation.
+AliceLabs Core is a cross-platform desktop development environment built with Tauri 2, Rust, React, TypeScript and Monaco.
 
-## Product decisions
-- Product: AliceLabs Core
-- Platforms: Windows, macOS, Linux
-- Desktop: Tauri 2
-- UI: React + TypeScript + Vite
-- Editor: Monaco (embedded editor surface; filesystem-backed workspace integration is next)
-- Core: Rust modular daemon
-- Persistence: SQLite (versioned schema v1, project metadata and provider-account references)
-- Model routing: hybrid (manual, recommended, automatic — scoring engine v1 implemented)
-- Integrations: global bridge with project-scoped permissions
-- Development: complete product delivered incrementally
+## Product principles
+- No bundled demo projects or hard-coded personal repositories.
+- Every user connects their own GitHub account and selects which repositories the AliceLabs GitHub App may access.
+- Windows, macOS and Linux.
+- Blue, editor-first IDE with repository explorer, tabs, assistant panel, terminal panel and multi-window shell.
+- Provider-neutral AI gateway and hybrid model routing.
+- Local-first architecture; credentials belong in the operating-system credential vault.
+- MIT licensed.
 
-## Repository map
-- `apps/desktop`: desktop UI, Monaco editor surface and Tauri shell
-- `crates/core-domain`: domain types and invariants
-- `crates/core-daemon`: local daemon and health API
-- `crates/core-protocol`: versioned IPC/event contracts
-- `crates/core-storage`: SQLite schema migrations and metadata repository
-- `crates/core-provider`: provider-neutral chat contract, API adapters and deterministic model selector
-- `schemas/*`: machine-readable contracts
-- `docs/*`: architecture, ADRs, security and roadmap
+## GitHub integration
+Core uses a GitHub App with OAuth Device Flow, not a shared personal access token. The app should request only **Metadata: Read-only** and **Contents: Read-only** repository permissions (plus read-only profile permission if needed). Users install it on their account or organization and choose which repositories to expose to Core.
 
-## Current status
-The desktop UI and Monaco editor surface build successfully. The Rust workspace passes formatting, tests and Clippy in GitHub Actions. Provider adapters implement HTTP requests for Anthropic Messages and OpenAI Chat Completions-compatible endpoints (including configurable gateways such as OpenRouter). A deterministic model selector filters by capabilities and context window, then scores eligible models by cost, latency and quality according to task complexity. Credentials are passed to adapter instances at runtime; this crate does not persist them.
+Register the AliceLabs Core GitHub App, enable Device Flow, then configure:
+- `apps/desktop/.env`: `VITE_GITHUB_CLIENT_ID` and `VITE_GITHUB_APP_INSTALL_URL`.
+- GitHub Actions repository variables for release builds: `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_INSTALL_URL`.
 
-This is an active foundation, not a finished IDE. The editor currently edits an in-memory sample buffer rather than files on disk. Workspace filesystem access, OS credential-vault integration, provider account management, wiring the routing selector into live provider sessions, real agent execution, MCP transport, tool permissions, and desktop packaging remain planned work. SQLite v1 currently stores project metadata and opaque provider credential references; it never stores API key values.
+See [GitHub App setup](apps/desktop/GITHUB_APP_SETUP.md) and [the environment template](apps/desktop/.env.example). OAuth Device Flow requests run in the Rust/Tauri process to avoid browser CORS restrictions. The current access token is held in memory only; it is not persisted. GitHub App user tokens expire, so secure refresh-token handling through the OS credential vault remains necessary before a production release.
 
-## Development prerequisites
-- Node.js LTS
-- pnpm 10
-- Rust stable toolchain
-- Tauri 2 platform prerequisites
+## Current implementation
+- Blue editor-first desktop shell; no seeded projects or fake agent records.
+- GitHub App Device Flow UI and per-user repository discovery.
+- Repository tree browsing and remote file preview in Monaco.
+- Multiple editor tabs, activity rail, assistant panel and bottom panel.
+- New-window action for Tauri desktop builds.
+- Provider-neutral Anthropic and OpenAI-compatible API adapters.
+- Capability/context-aware model selection engine.
+- SQLite v1 metadata schema.
+- MIT license and a multi-platform release workflow for Windows, macOS and Linux.
 
-## Start the UI
-```bash
+## Not yet production-complete
+Remote files are currently read-only previews; local clone/worktree management, writing/committing/pushing files, a real local terminal, agent execution, MCP/CLI bridge, provider account UI, OS keychain integration, token refresh, GitLab/Bitbucket adapters, and signed installers still need implementation. The terminal and assistant panels are intentionally labelled as not connected instead of showing fake functionality. New windows currently open an independent empty IDE window; shared session state is not yet synchronized between windows.
+
+## Development
+Requirements: Node.js LTS, pnpm 10, Rust stable and Tauri platform prerequisites.
+
+```powershell
 pnpm install
 pnpm --filter @core/desktop dev
 ```
 
-## Rust checks
-```bash
-cargo fmt --all -- --check
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+For a production build:
+
+```powershell
+pnpm --filter @core/desktop build
+pnpm --filter @core/desktop tauri build
 ```
 
-## Security baseline
-Never commit API keys, OAuth tokens, local `.env` files, provider session cookies, or user project data. Secrets must be stored through the operating-system credential vault adapter. Tool execution must be authorized by the daemon and scoped to a project.
-
 ## License
-The license is intentionally not preselected. Choose the project's open-source/commercial licensing strategy before publishing source code.
+MIT. See [LICENSE](LICENSE).
