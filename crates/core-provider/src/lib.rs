@@ -271,7 +271,11 @@ impl ProviderAdapter for AnthropicAdapter {
             model: &request.model,
             max_tokens: request.max_tokens,
             messages,
-            system: if system.is_empty() { None } else { Some(system) },
+            system: if system.is_empty() {
+                None
+            } else {
+                Some(system)
+            },
             temperature: request.temperature,
         };
 
@@ -338,11 +342,8 @@ mod tests {
 
     #[test]
     fn openai_adapter_identifies_provider() {
-        let adapter = OpenAiCompatibleAdapter::new(
-            "https://api.openai.com/v1",
-            "runtime-secret",
-            "openai",
-        );
+        let adapter =
+            OpenAiCompatibleAdapter::new("https://api.openai.com/v1", "runtime-secret", "openai");
         assert_eq!(adapter.provider_id(), "openai");
     }
 
