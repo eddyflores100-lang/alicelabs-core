@@ -1,4 +1,5 @@
 import { useState } from "react";
+import Editor from "@monaco-editor/react";
 import { Activity, Bot, Boxes, ChevronDown, CircleHelp, Command, FolderGit2, Gauge, GitBranch, Layers3, Plus, Search, Settings2, ShieldCheck, Sparkles, TerminalSquare, Workflow } from "lucide-react";
 
 const projects = ["OpenSAM", "MarketNow", "VerifyKYC", "Vigía"];
@@ -29,12 +30,12 @@ export function App() {
         <div className="side-label">PROJECTS</div>
         {projects.map(p=><button key={p} className={"project "+(activeProject===p?"selected":"")} onClick={()=>setActiveProject(p)}><FolderGit2 size={15}/>{p}</button>)}
         <div className="side-label spaced">DEVELOPMENT</div>
-        {["Explorer","Source Control","Extensions","Terminal"].map((x,i)=><button key={x} className="nav-item"><span className="nav-dot">{["▤","⑂","◈","⌁"][i]}</span>{x}</button>)}
+        {["Explorer","Source Control","Extensions","Terminal"].map((x,i)=><button key={x} className="nav-item" onClick={()=>setView(x === "Explorer" ? "Editor" : "Workspace")}><span className="nav-dot">{["▤","⑂","◈","⌁"][i]}</span>{x}</button>)}
         <div className="side-bottom"><div className="profile"><div className="avatar">AL</div><div><strong>AliceLabs</strong><small>Local workspace</small></div><Settings2 size={15}/></div></div>
       </aside>
       <section className="content">
-        <div className="tabs"><button className="tab active"><Activity size={14}/> Overview <span>×</span></button><button className="tab"><TerminalSquare size={14}/> Terminal</button><div className="tab-spacer"/><span className="branch"><GitBranch size={13}/> main</span></div>
-        <div className="page">
+        <div className="tabs"><button className={"tab "+(view === "Workspace" ? "active" : "")} onClick={()=>setView("Workspace")}><Activity size={14}/> Overview</button><button className={"tab "+(view === "Editor" ? "active" : "")} onClick={()=>setView("Editor")}><FolderGit2 size={14}/> Editor</button><button className="tab"><TerminalSquare size={14}/> Terminal</button><div className="tab-spacer"/><span className="branch"><GitBranch size={13}/> main</span></div>
+        {view === "Editor" ? <EditorView project={activeProject}/> : <div className="page">
           <div className="eyebrow">ALICELABS / DEVELOPMENT ENVIRONMENT</div>
           <div className="page-title"><div><h1>{activeProject}</h1><p>Project workspace · Local environment</p></div><button className="primary"><Plus size={15}/> New session</button></div>
           <div className="notice"><div className="notice-icon"><Command size={17}/></div><div><strong>Core foundation initialized</strong><p>This is the UI shell. Connect the local Core Daemon to activate providers, agents, tools and project indexing.</p></div><span className="pill muted">Foundation</span></div>
@@ -58,7 +59,7 @@ export function App() {
             </div>
           </div>
           <div className="footer-note"><span>CORE v0.1.0 · FOUNDATION</span><span>Local-first · Provider-agnostic · Human-governed</span></div>
-        </div>
+        </div>}
       </section>
     </div>
   </div>;
@@ -68,4 +69,70 @@ function Metric({icon,label,value,note}:{icon:React.ReactNode;label:string;value
 }
 function Quick({icon,title,desc}:{icon:React.ReactNode;title:string;desc:string}) {
  return <button className="quick"><span className="quick-icon">{icon}</span><span><strong>{title}</strong><small>{desc}</small></span><b>→</b></button>;
+}
+
+function EditorView({ project }: { project: string }) {
+  const [code, setCode] = useState(`export interface AgentTask {
+  id: string;
+  projectId: string;
+  objective: string;
+  status: "queued" | "running" | "completed" | "failed";
+}
+
+export async function runTask(task: AgentTask) {
+  if (!task.objective.trim()) {
+    throw new Error("Task objective is required");
+  }
+
+  return {
+    ...task,
+    status: "queued" as const,
+  };
+}
+`);
+
+  return (
+    <div className="editor-workspace">
+      <aside className="file-explorer">
+        <div className="file-explorer-title">EXPLORER <span>···</span></div>
+        <div className="file-project"><ChevronDown size={13}/>{project.toUpperCase()}</div>
+        <div className="file-item active"><span className="file-ts">TS</span> agent-task.ts</div>
+        <div className="file-item"><span className="file-ts">TS</span> agent-runtime.ts</div>
+        <div className="file-item"><span className="file-json">{ }</span> package.json</div>
+        <div className="file-item"><span className="file-md">M</span> README.md</div>
+        <div className="file-section">OUTLINE</div>
+        <div className="outline-item">AgentTask</div>
+        <div className="outline-item">runTask</div>
+      </aside>
+      <div className="editor-main">
+        <div className="editor-file-tabs">
+          <div className="editor-file-tab"><span className="file-ts">TS</span> agent-task.ts <span className="tab-close">×</span></div>
+          <div className="editor-file-path">{project} / src / agent-task.ts</div>
+        </div>
+        <div className="monaco-host">
+          <Editor
+            height="100%"
+            language="typescript"
+            theme="vs-dark"
+            value={code}
+            onChange={(value) => setCode(value ?? "")}
+            options={{
+              automaticLayout: true,
+              minimap: { enabled: false },
+              fontSize: 13,
+              fontFamily: "JetBrains Mono, Consolas, monospace",
+              lineNumbers: "on",
+              scrollBeyondLastLine: false,
+              smoothScrolling: true,
+              tabSize: 2,
+              wordWrap: "on",
+              padding: { top: 16 },
+              renderLineHighlight: "all",
+            }}
+          />
+        </div>
+        <div className="editor-status"><span>TypeScript</span><span>UTF-8</span><span>LF</span><span>Ln 1, Col 1</span><span className="editor-status-right">CORE EDITOR · LOCAL BUFFER</span></div>
+      </div>
+    </div>
+  );
 }
