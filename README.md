@@ -11,7 +11,7 @@ AliceLabs Core is a cross-platform, local-first, provider-agnostic AI developmen
 - UI: React + TypeScript + Vite
 - Editor: Monaco (embedded editor surface; filesystem-backed workspace integration is next)
 - Core: Rust modular daemon
-- Persistence: SQLite (storage boundary scaffolded; migrations are next)
+- Persistence: SQLite (versioned schema v1, project metadata and provider-account references)
 - Model routing: hybrid (manual, recommended, automatic — routing engine is next)
 - Integrations: global bridge with project-scoped permissions
 - Development: complete product delivered incrementally
@@ -21,7 +21,7 @@ AliceLabs Core is a cross-platform, local-first, provider-agnostic AI developmen
 - `crates/core-domain`: domain types and invariants
 - `crates/core-daemon`: local daemon and health API
 - `crates/core-protocol`: versioned IPC/event contracts
-- `crates/core-storage`: persistence boundary
+- `crates/core-storage`: SQLite schema migrations and metadata repository
 - `crates/core-provider`: provider-neutral chat contract, OpenAI-compatible and Anthropic adapters
 - `schemas/*`: machine-readable contracts
 - `docs/*`: architecture, ADRs, security and roadmap
@@ -29,7 +29,7 @@ AliceLabs Core is a cross-platform, local-first, provider-agnostic AI developmen
 ## Current status
 The desktop UI and Monaco editor surface build successfully. The Rust workspace passes formatting, tests and Clippy in GitHub Actions. Provider adapters implement HTTP requests for Anthropic Messages and OpenAI Chat Completions-compatible endpoints (including configurable gateways such as OpenRouter). Credentials are passed to adapter instances at runtime; this crate does not persist them.
 
-This is an active foundation, not a finished IDE. The editor currently edits an in-memory sample buffer rather than files on disk. Workspace filesystem access, OS credential-vault integration, SQLite migrations, provider account management, model routing, real agent execution, MCP transport, tool permissions, and desktop packaging remain planned work.
+This is an active foundation, not a finished IDE. The editor currently edits an in-memory sample buffer rather than files on disk. Workspace filesystem access, OS credential-vault integration, provider account management, model routing, real agent execution, MCP transport, tool permissions, and desktop packaging remain planned work. SQLite v1 currently stores project metadata and opaque provider credential references; it never stores API key values.
 
 ## Development prerequisites
 - Node.js LTS
