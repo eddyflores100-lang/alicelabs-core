@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import ProjectTaskPanel from './ProjectTaskPanel';
 import { ArrowRight, Cloud, CloudOff, ExternalLink, FileCode2, LoaderCircle, LockKeyhole, Play, ShieldCheck } from 'lucide-react';
 
 const configured = String(import.meta.env.VITE_CORE_REMOTE_URL || '').trim().replace(/\/+$/, '');
@@ -18,12 +19,13 @@ const ACTIONS = [
   { name:'Pruebas del proyecto', bin:'pnpm', args:['test'] }
 ] as const;
 
-export default function CloudRunnerPanel({projectId,workspaceName,activeFile,onNotice,onComplete,onClose}:{
+export default function CloudRunnerPanel({projectId,workspaceName,activeFile,onNotice,onComplete,onGeneratePlan,onClose}:{
   projectId:string;
   workspaceName:string;
   activeFile:{path:string;text:string}|null;
   onNotice:(message:string,isError?:boolean)=>void;
   onComplete:(message:string)=>void;
+  onGeneratePlan:(goal:string)=>Promise<{title:string;steps:string[]}>;
   onClose:()=>void;
 }){
   const [status,setStatus]=useState<'not-connected'|'online'|'error'>('not-connected');
@@ -118,6 +120,7 @@ export default function CloudRunnerPanel({projectId,workspaceName,activeFile,onN
         <button className="secondary-button" onClick={()=>void check()} disabled={busy}>{busy?<LoaderCircle size={14} className="spin"/>:<ShieldCheck size={14}/>} Comprobar acceso</button></div>
       <div className="cloud-status">{status==='online'?'Identidad autorizada y servicio disponible':status==='error'?'No se ha podido comprobar Access':'Autenticación pendiente'}</div>
       <div className="cloud-action-row"><span><FileCode2 size={15}/> {activeFile?.path||'Ningún archivo abierto'}</span><button className="secondary-button" onClick={()=>void sendFile()} disabled={busy||status!=='online'||!activeFile}>Enviar archivo <ArrowRight size={13}/></button></div>
+      <ProjectTaskPanel endpoint={endpoint} ready={status==='online'} onNotice={onNotice} onComplete={onComplete} onGeneratePlan={onGeneratePlan}/>
       <section className="cloud-whatsapp" aria-label="Avisos WhatsApp del proyecto">
         <strong>Avisos WhatsApp al terminar tareas</strong>
         <p>Requiere un servidor privado activo, la integración oficial de Meta y tu consentimiento. No envía código ni secretos del proyecto.</p>

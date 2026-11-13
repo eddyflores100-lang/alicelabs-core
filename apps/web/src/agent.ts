@@ -10,7 +10,7 @@ export type Connection = {
 };
 export type GuideStep = { title: string; description: string; action: 'open_folder' | 'open_github' | 'search_files' | 'configure_ai' | 'open_terminal' | 'save_active' | 'edit_active' | 'run_command' | null; command?: string | null };
 export type Guidance = { summary: string; steps: GuideStep[] };
-export type AgentResponse = { ok: boolean; answer?: string; error?: string; action?: 'edit' | 'chat' | 'guide'; model?: string; provider?: Provider; durationMs?: number; guide?: Guidance };
+export type AgentResponse = { plan?: {title:string;steps:string[]}|null;ok: boolean; answer?: string; error?: string; action?: 'edit' | 'chat' | 'guide' | 'plan'; model?: string; provider?: Provider; durationMs?: number; guide?: Guidance };
 export const DEFAULT_MODEL: Record<Provider, string> = {
   openai: 'gpt-6.1-sol', openrouter: 'openai/gpt-6.1-sol',
   anthropic: 'claude-sonnet-4-5', google: 'gemini-2.5-flash', deepseek: 'deepseek-flash', groq: 'llama-3.3-70b-versatile', mistral: 'mistral-large-latest', xai: 'grok-4'
@@ -33,7 +33,7 @@ export async function discoverModels(provider: Provider, apiKey: string): Promis
   return { models: result.models, refreshedAt: result.refreshedAt || Date.now(), meta: result.meta || null };
 }
 export async function requestAgent(args: {
-  provider: Provider; model: string; apiKey: string; action: 'edit' | 'chat' | 'guide';
+  provider: Provider; model: string; apiKey: string; action: 'edit' | 'chat' | 'guide' | 'plan';
   question: string; project?: string; path?: string; code?: string; history?: ChatMessage[];
 }): Promise<AgentResponse> {
   const response = await fetch(API_ENDPOINT + '/api/agent', {

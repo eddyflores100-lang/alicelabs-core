@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent } from 'react';
+import type { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent, Dispatch, SetStateAction } from 'react';
 import Editor, { DiffEditor, loader } from '@monaco-editor/react';
 import type * as monaco from 'monaco-editor';
 import {
@@ -17,8 +17,10 @@ import {
 } from './workspace';
 import type { FileNode, OpenDocument, Workspace } from './workspace';
 import { discoverModels, pingWorker, requestAgent } from './agent';
-import type { ChatMessage, Provider, Connection, Guidance, GuideStep } from './agent';
+import type { ChatMessage, Provider, Connection, Guidance, GuideStep, AgentResponse } from './agent';
 import { chooseRoute } from './routing';
+import {runAgentEditTeam} from './agentTeam';
+import {grantedProfiles} from './ownerGrants';
 import type { Priority } from './routing';
 import ChatGPTPanel from './ChatGPTPanel';
 import AIConnectionsHub from './AIConnectionsHub';
@@ -84,8 +86,12 @@ type AppProps = {
   activeProject: boolean;
   onProjectTitle: (name: string) => void;
   onDirtyChange: (dirty: boolean) => void;
+  connections: Connection[];
+  setConnections: Dispatch<SetStateAction<Connection[]>>;
+  projectGrantIds: string[];
+  onProjectGrant: (connectionId:string,enabled:boolean)=>void;
 };
-export default function App({ projectId, activeProject, onProjectTitle, onDirtyChange }: AppProps) {
+export default function App({ projectId, activeProject, onProjectTitle, onDirtyChange, connections, setConnections, projectGrantIds, onProjectGrant }: AppProps) {
   const [hydrated, setHydrated] = useState(false);
   const didWarnStorage = useRef(false);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -106,7 +112,7 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
   const [logs, setLogs] = useState<LogEntry[]>([{ id: 1, time: stamp(), level: 'info', text: 'Core iniciado. Abre una carpeta o repositorio para comenzar.' }]);
   const [toast, setToast] = useState('');
   // All credentials remain in this tab's RAM. No localStorage or backend vault.
-  const [connections, setConnections] = useState<Connection[]>([]);
+  const projectConnections=useMemo(()=>grantedProfiles(connections,projectGrantIds),[connections,projectGrantIds]);
   const [draftProvider, setDraftProvider] = useState<Provider>('openrouter');
   const [draftLabel, setDraftLabel] = useState('');
   const [draftKey, setDraftKey] = useState('');
@@ -137,8 +143,9 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
   const [question, setQuestion] = useState('');
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [agentBusy, setAgentBusy] = useState(false);
+  const [useSubagents, setUseSubagents] = useState(true);
   const [notifyOnFinish, setNotifyOnFinish] = useState(false);
-  const [proposal, setProposal] = useState<{ path: string; next: string; original: string } | null>(null);
+  const [proposal, setProposal] = useState<{ path: string; next: string; original: string; teamReview?:string;teamApproved?:boolean;teamCalls?:number } | null>(null);
   const [agentWidth, setAgentWidth] = useState(380);
   const [bridgeToken, setBridgeToken] = useState('');
   const [bridgeConnected, setBridgeConnected] = useState(false);
@@ -160,13 +167,13 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
   const allFiles = useMemo(() => workspace ? flatten(workspace.nodes).filter(n => n.kind === 'file') : [], [workspace]);
   const filteredFiles = useMemo(() => allFiles.filter(n => n.path.toLowerCase().includes(filter.trim().toLowerCase())).slice(0, 180), [allFiles, filter]);
   const routePreview = useMemo(
-    () => chooseRoute(connections, priority, agentMode, question, selectedProfile, selectedModel),
-    [connections, priority, agentMode, question, selectedProfile, selectedModel]
+    () => chooseRoute(projectConnections, priority, agentMode, question, selectedProfile, selectedModel),
+    [projectConnections, priority, agentMode, question, selectedProfile, selectedModel]
   );
   const visibleModels = useMemo(() => {
-    const pool = selectedProfile === 'auto' ? connections : connections.filter(c => c.id === selectedProfile);
+    const pool = selectedProfile === 'auto' ? projectConnections : projectConnections.filter(c => c.id === selectedProfile);
     return Array.from(new Set(pool.flatMap(c => c.models.map(m => m.id)))).slice(0, 180);
-  }, [connections, selectedProfile]);
+  }, [projectConnections, selectedProfile]);
 
   const log = useCallback((text: string, level: LogEntry['level'] = 'info') => {
     setLogs(prev => [{ id: Date.now() + Math.random(), text, level, time: stamp() }, ...prev].slice(0, 250));
@@ -499,6 +506,7 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
         models: catalog.models, refreshedAt: catalog.refreshedAt, meta: catalog.meta
       };
       setConnections(prev => [...prev, connection]);
+      onProjectGrant(connection.id,true);
       setSelectedModel('auto');
       setDraftLabel('');
       setDraftKey('');
@@ -643,7 +651,7 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
     const prompt = question.trim();
     if (!prompt || agentBusy) return;
     const loginMode = authMode === 'chatgpt';
-    const route = loginMode ? null : chooseRoute(connections, priority, agentMode, prompt, selectedProfile, selectedModel);
+    const route = loginMode ? null : chooseRoute(projectConnections, priority, agentMode, prompt, selectedProfile, selectedModel);
     const chatAccount = chatGPTAccounts.find(a => a.id === chatGPTActiveId);
     if (loginMode && (!chatGPTReady || !chatAccount?.connected || !chatAccount.planAccess || !chatGPTModel)) {
       notify('Inicia sesión con ChatGPT y elige un modelo disponible', true);
@@ -674,7 +682,14 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
     setLastRoute(route ? { model: route.model.id, provider: route.connection.provider, profile: route.connection.label, reason: route.reason } : null);
     const selectedLabel = loginMode ? (chatAccount?.email || 'ChatGPT') : (route?.connection.label || 'modelo');
     try {
-      const result = loginMode ? await runChatGPT({
+      const teamResult = agentMode==='edit' && !loginMode && useSubagents ? await runAgentEditTeam({
+        request:prompt,original:before,path:filepath,project:projectContext,
+        call:async input=>requestAgent({
+          provider:route!.connection.provider,model:route!.model.id,apiKey:route!.connection.apiKey,
+          action:input.action,question:input.question,project:input.project,path:input.path,code:input.code
+        })
+      }) : null;
+      const result: AgentResponse = teamResult ? {ok:true,answer:teamResult.proposal,action:'edit'} : loginMode ? await runChatGPT({
         token: chatGPTPair, id: chatGPTActiveId, model: chatGPTModel,
         action: agentMode, question: prompt, project: projectContext,
         path: includeActive ? filepath : '', code: fileContext, history
@@ -687,7 +702,14 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
       });
       if (agentMode === 'edit') {
         if (typeof result.answer !== 'string' || !result.answer.trim()) throw new Error('El modelo no devolvió contenido válido');
-        setProposal({ path: filepath, next: result.answer, original: before });
+        setProposal({ path: filepath, next: result.answer, original: before,
+          ...(teamResult?{teamReview:teamResult.review,teamApproved:teamResult.approved,teamCalls:teamResult.modelCalls}:{})
+        });
+        if(teamResult){
+          setHistory(prev=>[...prev,{role:'assistant',content:'PLANIFICADOR: '+teamResult.plan.slice(0,2400),timestamp:Date.now()},
+            {role:'assistant',content:'REVISOR: '+teamResult.review.slice(0,2200)+'\n'+(teamResult.approved?'Revisión satisfactoria':'Observaciones pendientes, propuesta bloqueada')+
+              ' · '+teamResult.modelCalls+' consultas API',timestamp:Date.now()}]);
+        }
         setHistory(prev => [...prev, { role: 'assistant', content: 'Propuesta lista para ' + filepath + '. Revisa el diff antes de aplicar.', timestamp: Date.now() }]);
       } else if (agentMode === 'guide') {
         const plan = result.guide || { summary: result.answer || 'Guía sin pasos', steps: [] };
@@ -708,6 +730,7 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
   }
   function applyProposal() {
     if (!proposal) return;
+    if(proposal.teamApproved===false){notify('El equipo de subagentes marcó problemas pendientes. Solicita una nueva revisión antes de aplicar.',true);return;}
     const target = docs.find(d => d.path === proposal.path);
     if (!target || target.readOnly || target.text !== proposal.original) {
       notify('El archivo cambió mientras se preparaba la propuesta. No se aplicó.', true); return;
@@ -918,10 +941,11 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
           {history.map((m,i) => <div key={i} className={'chat-message '+m.role}><div className="chat-author">{m.role==='user'?'Tú':'CORE AGENT'}<span>{new Date(m.timestamp).toLocaleTimeString('es-EC',{hour:'2-digit',minute:'2-digit'})}</span></div><div className="chat-text">{m.content}</div></div>)}
           {agentBusy && <div className="agent-thinking"><LoaderCircle size={15} className="spin"/> Consultando {authMode==='chatgpt'?(chatGPTAccounts.find(a=>a.id===chatGPTActiveId)?.email||'ChatGPT'):(lastRoute?.profile||'modelo')}...</div>}
           {guidance && <div className="guide-plan"><div className="guide-plan-title"><Bot size={16}/> Plan de trabajo <span>{guidance.steps.length} pasos</span></div>{guidance.steps.map((step,i) => <div className="guide-step" key={i}><div className="guide-step-number">{i+1}</div><div className="guide-step-body"><strong>{step.title}</strong><p>{step.description}</p>{step.action && <button onClick={() => runGuideStep(step.action, step.command)}>{step.action==='run_command'?'Preparar comando':'Abrir acción'} <ArrowRight size={12}/></button>}</div></div>)}</div>}
-          {proposal && <div className="proposal-card"><div className="proposal-header"><CheckCircle2 size={16}/><strong>Propuesta preparada</strong></div><div className="proposal-path">{proposal.path}</div><div className="proposal-stats"><span>{proposal.original.split('\n').length} líneas actuales</span><ArrowRight size={13}/><span>{proposal.next.split('\n').length} propuestas</span></div><p>El cambio no se aplicará sin tu aprobación. Luego podrás guardarlo.</p><div className="proposal-actions"><button onClick={() => setProposal(null)} className="secondary-button">Descartar</button><button onClick={() => setDialog('diff')} className="secondary-button"><Code2 size={14}/> Revisar diff</button><button onClick={applyProposal} className="primary-button"><Check size={14}/> Aplicar al editor</button></div></div>}
+          {proposal && <div className="proposal-card"><div className="proposal-header"><CheckCircle2 size={16}/><strong>Propuesta preparada</strong></div><div className="proposal-path">{proposal.path}</div>{proposal.teamReview && <p>Equipo de subagentes · {proposal.teamCalls||0} consultas · {proposal.teamApproved?'Revisión favorable':'Revisión con observaciones; no aplicable'}.</p>}<div className="proposal-stats"><span>{proposal.original.split('\n').length} líneas actuales</span><ArrowRight size={13}/><span>{proposal.next.split('\n').length} propuestas</span></div><p>El cambio no se aplicará sin tu aprobación. Luego podrás guardarlo.</p><div className="proposal-actions"><button onClick={() => setProposal(null)} className="secondary-button">Descartar</button><button onClick={() => setDialog('diff')} className="secondary-button"><Code2 size={14}/> Revisar diff</button><button onClick={applyProposal} className="primary-button" disabled={proposal.teamApproved===false}><Check size={14}/> Aplicar al editor</button></div></div>}
         </div>
         <div className="agent-compose">
           <div className="composer-tabs"><button className={agentMode==='chat'?'mode-active':''} onClick={() => setAgentMode('chat')}><MessageSquareText size={13}/> Preguntar</button><button className={agentMode==='edit'?'mode-active':''} onClick={() => setAgentMode('edit')}><Code2 size={13}/> Editar</button><button className={agentMode==='guide'?'mode-active':''} onClick={() => setAgentMode('guide')}><Bot size={13}/> Guía</button></div>
+          {agentMode==='edit' && <label className="agent-team-toggle"><input type="checkbox" checked={useSubagents} onChange={e=>setUseSubagents(e.target.checked)} disabled={authMode==='chatgpt'||agentBusy}/><span>Equipo de subagentes: planificar → programar → revisar (hasta 5 solicitudes API; ninguna edición automática)</span></label>}
           <form onSubmit={askAgent} className="compose-box"><textarea rows={3} value={question} onChange={e => setQuestion(e.target.value)} onKeyDown={e => { if (e.key==='Enter' && !e.shiftKey) {e.preventDefault(); void askAgent();} }} placeholder={agentMode==='edit'?'Describe el cambio que quieres aplicar...':agentMode==='guide'?'¿Qué quieres hacer? Te guiaré paso a paso.':'Pregunta sobre tu código o proyecto...'} disabled={agentBusy}/><div className="compose-bottom"><div className="context-options"><label className="file-context-toggle"><input type="checkbox" checked={agentMode==='edit' || includeFile} onChange={e=>setIncludeFile(e.target.checked)} disabled={agentMode==='edit' || !active}/><span>{agentMode==='edit' ? 'Archivo activo' : 'Archivo'}</span></label><label className="file-context-toggle"><input type="checkbox" checked={includeProject} onChange={e=>setIncludeProject(e.target.checked)} disabled={!workspace}/><span>Mapa proyecto</span></label></div><VoiceInput disabled={agentBusy} onTranscript={text=>setQuestion(prev=>(prev.trim()?prev.trim()+' ':'')+text)} onNotice={notify}/><button className="send-button" type="submit" disabled={agentBusy || !question.trim()} title="Enviar al agente">{agentBusy ? <LoaderCircle size={17} className="spin"/> : <ArrowRight size={18}/>}</button></div></form>
           <div className="agent-disclaimer"><ShieldCheck size={12}/> {authMode==='chatgpt'?'Autorización oficial · credenciales solo en el compañero local':'Claves API solo en memoria'} · Sin evasión de límites</div>
         </div>
@@ -965,9 +989,18 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
               </div>
             </div> : <p>La sincronización entre dispositivos requiere un servidor privado configurado y autenticación de Cloudflare Access.</p>}
           </section>
+          <section className="project-account-grants" aria-label="Permisos de cuentas de este proyecto">
+            <div className="accounts-head"><strong>Permisos de este proyecto</strong><span>{projectConnections.length} de {connections.length} cuentas autorizadas</span></div>
+            <p>Las cuentas pertenecen al propietario de Core. Cada proyecto solo puede usar los perfiles que habilites aquí; los proyectos nuevos comienzan sin cuentas asignadas.</p>
+            <div className="project-grant-list">
+              {connections.map(c=><label key={c.id}><input type="checkbox" checked={projectGrantIds.includes(c.id)} onChange={e=>onProjectGrant(c.id,e.target.checked)}/>
+                <span>{c.label} ({labelProvider[c.provider]})</span></label>)}
+              {!connections.length && <span>Primero conecta una cuenta autorizada del proveedor.</span>}
+            </div>
+          </section>
           <div className="route-controls">
             <label>Prioridad del agente<select value={priority} onChange={e => setPriority(e.target.value as Priority)}><option value="balanced">Equilibrada · recomendada</option><option value="quality">Máxima calidad aproximada</option><option value="economy">Economía y velocidad</option></select></label>
-            <label>Cuenta autorizada<select value={selectedProfile} onChange={e => { setSelectedProfile(e.target.value); setSelectedModel('auto'); }}><option value="auto">Automático entre mis conexiones</option>{connections.map(c => <option key={c.id} value={c.id}>{c.label} ({labelProvider[c.provider]})</option>)}</select></label>
+            <label>Cuenta autorizada<select value={selectedProfile} onChange={e => { setSelectedProfile(e.target.value); setSelectedModel('auto'); }}><option value="auto">Automático entre mis conexiones</option>{projectConnections.map(c => <option key={c.id} value={c.id}>{c.label} ({labelProvider[c.provider]})</option>)}</select></label>
             <label className="route-model-control">Modelo<select value={selectedModel} onChange={e => setSelectedModel(e.target.value)}><option value="auto">Automático · analizar disponibilidad</option>{visibleModels.map(m => <option key={m} value={m}>{m}</option>)}</select></label>
           </div>
           {routePreview && <div className="selected-route"><Sparkles size={16}/><div><strong>{routePreview.model.id}</strong><span>{routePreview.connection.label} · {routePreview.considered} modelos evaluados</span><p>{routePreview.reason}</p></div></div>}
@@ -1016,6 +1049,16 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
         {dialog==='cloud' && <CloudRunnerPanel
           projectId={projectId} workspaceName={workspace?.name||'Proyecto sin abrir'}
           activeFile={active?{path:active.path,text:active.text}:null}
+          onGeneratePlan={async goal=>{
+            const route=chooseRoute(projectConnections,priority,'guide',goal,selectedProfile,selectedModel);
+            if(!route)throw new Error('Conecta una cuenta API autorizada y selecciona un modelo para planificar.');
+            const response=await requestAgent({
+              provider:route.connection.provider,model:route.model.id,apiKey:route.connection.apiKey,
+              action:'plan',question:goal,project:workspace?.name||'Proyecto sin abrir'
+            });
+            if(!response.plan)throw new Error('El modelo no propuso pasos compatibles con las herramientas permitidas.');
+            return response.plan;
+          }}
           onNotice={notify} onComplete={completeTaskNotice} onClose={()=>setDialog(null)}
         />}
         {dialog==='bridge' && <form onSubmit={connectBridge} className="dialog-content"><p>Para ejecutar comandos necesitas Core Local Bridge en tu propio equipo. Abre la terminal en la carpeta del repositorio y ejecuta:</p><div className="command-snippet"><code>node tools/local-bridge/server.mjs</code><button type="button" onClick={()=>void navigator.clipboard.writeText('node tools/local-bridge/server.mjs')} title="Copiar"><Copy size={15}/></button></div><p>El Bridge mostrará un token de sesión. Cada comando solicitará autorización en esa terminal.</p><label>Token de emparejamiento local</label><div className="input-with-icon"><LockKeyhole size={16}/><input type="password" autoFocus value={bridgeToken} onChange={e=>setBridgeToken(e.target.value)} placeholder="Pega el token que aparece en tu terminal"/></div><div className="dialog-actions"><button type="button" className="secondary-button" onClick={()=>setDialog(null)}>Cancelar</button><button className="primary-button" type="submit" disabled={!bridgeToken.trim()}><Wifi size={15}/> Conectar</button></div></form>}

