@@ -29,7 +29,7 @@ jobs:
       - name: Build the PWA
         run: pnpm web:build
       - name: Test encrypted owner vault (WebCrypto)
-        run: node --experimental-strip-types --test apps/web/test-vault.mjs apps/web/test-agent-team.mjs apps/web/test-owner-grants.mjs apps/web/test-github-workspace.mjs apps/web/test-github-actions.mjs apps/web/test-github-pull-requests.mjs apps/web/test-multifile-team.mjs apps/web/test-github-batch-pr.mjs apps/web/test-github-autopilot.mjs apps/web/test-github-autopilot-install.mjs
+        run: node --experimental-strip-types --test apps/web/test-vault.mjs apps/web/test-agent-team.mjs apps/web/test-owner-grants.mjs apps/web/test-github-workspace.mjs apps/web/test-github-actions.mjs apps/web/test-github-pull-requests.mjs apps/web/test-multifile-team.mjs apps/web/test-github-batch-pr.mjs apps/web/test-github-autopilot.mjs apps/web/test-github-autopilot-install.mjs apps/web/test-security-headers.mjs
       - name: Test model routing
         run: pnpm test:web
       - name: Test Worker and public model catalog
