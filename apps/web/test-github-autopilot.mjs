@@ -10,7 +10,23 @@ test('Autopilot issue inputs strictly restrict scope',()=>{
   assert.deepEqual(validateAutopilotGoal(' Improve this module ', 'src/a.ts, src/a.test.ts'),{
     goal:'Improve this module',files:'src/a.ts,src/a.test.ts'
   });
+  assert.deepEqual(validateAutopilotGoal('Improve Core monorepo',
+    'apps/web/src/App.tsx,apps/api/src/index.js'),{
+    goal:'Improve Core monorepo',files:'apps/web/src/App.tsx,apps/api/src/index.js'
+  });
+  assert.deepEqual(validateAutopilotGoal('Edit one section of App safely',
+    'apps/web/src/App.tsx#L120-L180,apps/web/src/agent.ts'),{
+    goal:'Edit one section of App safely',
+    files:'apps/web/src/App.tsx#L120-L180,apps/web/src/agent.ts'
+  });
   for(const files of [
+    'apps/web/src/App.tsx#L0-L10,src/a.ts',
+    'apps/web/src/App.tsx#L20-L10,src/a.ts',
+    'apps/web/src/App.tsx#L1-L250,src/a.ts',
+    'apps/web/src/App.tsx#L1-L10,apps/web/src/App.tsx#L11-L20',
+    'apps/web/src/../secrets.json,src/a.ts',
+    'apps/untrusted/src/index.ts,src/a.ts',
+    '.github/workflows/ci.yml,src/a.ts',
     'src/a.ts','src/a.ts,src/a.ts','src/a.ts,../.env',
     'src/a.ts,src/../private.ts','src/a.ts,src\\b.ts','src/a.ts,src/.env'
   ])assert.throws(()=>validateAutopilotGoal('Review existing files',files));

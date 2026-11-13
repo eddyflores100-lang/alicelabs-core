@@ -90,8 +90,8 @@ export default function GithubAutopilotPanel({repo,token,onNotice}:{
       <textarea id="core-auto-goal" rows={3} className="dialog-text-input" maxLength={1600}
         placeholder="Corrige una función y actualiza su prueba" value={goal} onChange={e=>setGoal(e.target.value)}/>
       <label htmlFor="core-auto-files">2–6 archivos existentes bajo src/</label>
-      <input id="core-auto-files" className="dialog-text-input" maxLength={700}
-        placeholder="src/index.ts,src/index.test.ts" value={files} onChange={e=>setFiles(e.target.value)}/>
+      <input id="core-auto-files" className="dialog-text-input" maxLength={900}
+        placeholder="apps/web/src/App.tsx#L100-L180,apps/web/src/agent.ts" value={files} onChange={e=>setFiles(e.target.value)}/>
       <button className="secondary-button" type="button" disabled={busy||!goal.trim()||!files.trim()}
         onClick={()=>void submitTask()}><CheckCircle2 size={14}/> Crear tarea aprobada en GitHub</button>
       {issueLink&&<a href={issueLink} rel="noopener noreferrer" target="_blank">Ver tarea recién creada <ExternalLink size={13}/></a>}

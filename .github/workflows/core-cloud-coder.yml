@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       files:
-        description: "2-6 existing src/ files separated by commas"
+        description: "2-6 existing source files: src/ or apps/{web,api,remote}/src"
         required: true
         type: string
   workflow_call:
@@ -104,5 +104,25 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build web project
         run: pnpm web:build
-      - name: Run isolated checks
-        run: pnpm test:web && pnpm test:worker
+      - name: Test all browser subagents, account isolation and GitHub connectors
+        run: >-
+          node --experimental-strip-types --test
+          apps/web/test-vault.mjs
+          apps/web/test-agent-team.mjs
+          apps/web/test-owner-grants.mjs
+          apps/web/test-github-workspace.mjs
+          apps/web/test-github-actions.mjs
+          apps/web/test-github-pull-requests.mjs
+          apps/web/test-multifile-team.mjs
+          apps/web/test-github-batch-pr.mjs
+          apps/web/test-github-autopilot.mjs
+      - name: Test official provider API worker
+        run: pnpm test:worker
+      - name: Test web model routing
+        run: pnpm test:web
+      - name: Test private runner authorization and isolation
+        run: pnpm --filter @core/remote test && pnpm --filter @core/remote check
+      - name: Test cloud coder and scheduled autopilot controls
+        run: node --experimental-strip-types --test tools/cloud-code-agent.test.mjs tools/core-autopilot-queue.test.mjs
+      - name: Test companion authentication without real credentials
+        run: node --test tools/chatgpt-companion/test.mjs

@@ -20,15 +20,29 @@ async function api<T>(repo:GithubRepoInfo,token:string,route:string,method='GET'
   }
   return response.json() as Promise<T>;
 }
+export function validScopedAutopilotFile(selector:string):boolean{
+  const match=selector.match(/^(.*?)(?:#L([1-9]\d*)-L([1-9]\d*))?$/);
+  if(!match)return false;
+  const path=match[1];
+  if(!/^(?:src\/|apps\/(?:web|api|remote)\/src\/)/.test(path)||
+    path.length>220||path.startsWith('/')||path.includes('\\')||
+    /[\u0000-\u001f\u007f]/.test(path)||
+    path.split('/').some(part=>!part||part==='.'||part==='..')||
+    !/\.(ts|tsx|js|jsx|css|md|json|py|go|rs|html)$/i.test(path))return false;
+  if(match[2]){
+    const start=Number(match[2]),end=Number(match[3]);
+    if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||end<start||end-start>=200)return false;
+  }
+  return true;
+}
 export function validateAutopilotGoal(goal:string,files:string):{goal:string;files:string}{
   const summary=goal.replace(/[\r\n\t]/g,' ').trim();
   if(summary.length<5||summary.length>1600||/[\u0000-\u001f\u007f]/.test(summary))
     throw new Error('Especifica un objetivo de entre 5 y 1600 caracteres.');
   const paths=files.split(',').map(x=>x.trim()).filter(Boolean);
-  if(paths.length<2||paths.length>6||new Set(paths).size!==paths.length||paths.some(x=>
-    !x.startsWith('src/')||x.includes('..')||x.includes('\\')||x.startsWith('/')||
-    /[\u0000-\u001f\u007f]/.test(x)||x.length>220||
-    !/\.(ts|tsx|js|jsx|css|md|json|py|go|rs|html)$/i.test(x)))
+  const actualPaths=paths.map(value=>value.split('#L')[0]);
+  if(paths.length<2||paths.length>6||new Set(actualPaths).size!==paths.length||
+    paths.some(value=>!validScopedAutopilotFile(value)))
     throw new Error('Selecciona 2–6 archivos de src/ existentes y separados por comas.');
   return {goal:summary,files:paths.join(',')};
 }
