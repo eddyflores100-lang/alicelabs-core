@@ -109,3 +109,18 @@ test('Identical project IDs are isolated across owner identities',async()=>{
     assert.equal(original.status,200);
   }finally{await rm(folder,{recursive:true,force:true});}
 });
+test('Command approval survives Worker to Durable Object forwarding without bypass',async()=>{
+  const {mod,folder}=await makeRuntime();
+  try{
+    const server=makeServer(mod);
+    const make=approved=>new Request(base+'/run',{method:'POST',
+      headers:{Origin:'https://alicelabs-core.pages.dev'},
+      body:JSON.stringify({bin:'node',args:['--version'],approved})
+    });
+    const denied=await mod.default.fetch(make(false),server.env,server.ctx);
+    assert.equal(denied.status,400);
+    const allowed=await mod.default.fetch(make(true),server.env,server.ctx);
+    assert.equal(allowed.status,200);
+    assert.equal((await allowed.json()).ok,true);
+  }finally{await rm(folder,{recursive:true,force:true});}
+});

@@ -69,7 +69,7 @@ export default {
       let data;try{data=JSON.parse(raw);}catch{return responseJson({error:'JSON inválido'},400,allow);}
       const command=safeCommand(data);
       if(!command)return responseJson({error:'Comando no permitido o sin autorización explícita'},400,allow);
-      request=new Request('https://internal.local/run',{method:'POST',body:JSON.stringify(command),
+      request=new Request('https://internal.local/run',{method:'POST',body:JSON.stringify({...command,approved:true}),
         headers:{'Content-Type':'application/json'}});
     } else if(action.startsWith('tasks')) {
       const validRoute=/^tasks(?:\/[a-f0-9-]{36}(?:\/cancel)?)?$/i.test(action);
@@ -224,7 +224,7 @@ export class ProjectSandbox extends DurableObject {
     }
     if(path==='/run'&&request.method==='POST'){
       const command=await request.json();
-      if(!safeCommand({...command,approved:true}))return responseJson({error:'Comando no permitido'},400);
+      if(!safeCommand(command))return responseJson({error:'Comando no permitido'},400);
       const job=this.runTail.then(()=>this.execute(command));
       this.runTail=job.catch(()=>{});
       try{return await job;}catch(e){return responseJson({error:'Sandbox no disponible: '+String(e.message||e).slice(0,150)},503);}

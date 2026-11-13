@@ -94,7 +94,7 @@ http.createServer(async(req,res)=>{
     if(req.method==='POST'&&u.pathname==='/run'){
       const body=await readBody(req,8000);
       let value;try{value=JSON.parse(body);}catch{return json(res,400,{error:'JSON inválido'});}
-      const command=safeCommand({...value,approved:true});
+      const command=safeCommand(value);
       if(!command)return json(res,400,{error:'Comando no admitido'});
       return json(res,200,await execute(command));
     }
