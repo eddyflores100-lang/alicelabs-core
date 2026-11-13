@@ -69,7 +69,7 @@ export async function unsealConnections(password: string): Promise<Connection[]>
     const iv = decode(envelope.iv);
     if (salt.length !== 16 || iv.length !== 12) throw new Error('Invalid parameters');
     const key = await keyFor(password, salt, envelope.iterations);
-    const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, decode(envelope.ciphertext));
+    const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv as BufferSource }, key, decode(envelope.ciphertext) as BufferSource);
     const parsed: unknown = JSON.parse(decoder.decode(decrypted));
     if (!Array.isArray(parsed) || parsed.length > 100 ||
         !parsed.every((c: unknown) => {
