@@ -1,6 +1,7 @@
 import {useCallback,useEffect,useMemo,useState} from 'react';
 import {CheckCircle2,CircleAlert,Clock3,Cloud,ExternalLink,Play,RefreshCw,Square,Workflow} from 'lucide-react';
 import type {GithubRepoInfo} from './githubWorkspace';
+import GithubAutopilotPanel from './GithubAutopilotPanel';
 import {
   cancelGithubRun,dispatchGithubWorkflow,dispatchGithubCloudCoder,isCloudCoderWorkflow,listGithubRuns,listGithubWorkflows
 } from './githubActions';
@@ -30,6 +31,7 @@ export default function GithubActionsPanel({repo,token,onNotice}:{
   const [cloudFiles,setCloudFiles]=useState('');
   const selected=useMemo(()=>workflows.find(w=>w.id===selectedId)||null,[workflows,selectedId]);
   const cloudCoder=isCloudCoderWorkflow(selected);
+  const autopilot=selected?.path==='.github/workflows/core-autopilot.yml';
   const load=useCallback(async()=>{
     if(!token)return;
     setLoading(true);
@@ -94,6 +96,7 @@ export default function GithubActionsPanel({repo,token,onNotice}:{
     </select>
     {selected&&<div className="github-actions-details">
       <p><Workflow size={14}/> {selected.path}</p>
+      {autopilot&&<GithubAutopilotPanel repo={repo} token={token} onNotice={onNotice}/>}
       {cloudCoder&&<div className="github-cloud-coder-form">
         <p><strong>Core Cloud Coder</strong> ejecuta agentes planificador → programador → revisor en GitHub, crea una rama y abre un PR. No fusiona ni ejecuta el código generado con secretos presentes.</p>
         <label htmlFor="core-cloud-goal">Objetivo del desarrollo</label>
@@ -104,7 +107,7 @@ export default function GithubActionsPanel({repo,token,onNotice}:{
           placeholder="src/main.ts,src/main.test.ts" value={cloudFiles} onChange={e=>setCloudFiles(e.target.value)}/>
         <p>En GitHub configura el secreto CORE_AGENT_API_KEY y, opcionalmente, las variables CORE_AGENT_PROVIDER y CORE_AGENT_MODEL. Activa permiso para crear PR mediante Actions. El código de los archivos seleccionados se envía al proveedor de IA configurado. Consume tokens y minutos de CI; revisa los archivos y el PR antes de autorizar.</p>
       </div>}
-      <button className="primary-button" type="button" disabled={busy||loading||(cloudCoder&&(!cloudGoal.trim()||!cloudFiles.trim()))} onClick={()=>void run()}>
+      <button className="primary-button" type="button" disabled={busy||loading||autopilot||(cloudCoder&&(!cloudGoal.trim()||!cloudFiles.trim()))} onClick={()=>void run()}>
         <Play size={14}/> {busy?'Procesando…':'Ejecutar workflow con confirmación'}
       </button>
       {dispatchLink&&<a href={dispatchLink} target="_blank" rel="noopener noreferrer">Abrir ejecución solicitada <ExternalLink size={13}/></a>}

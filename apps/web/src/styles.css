@@ -423,3 +423,21 @@
 .github-cloud-coder-form p{font-size:12px;line-height:1.5;margin:3px 0}
 .github-cloud-coder-form label{font-size:12px;font-weight:600}
 .github-cloud-coder-form textarea,.github-cloud-coder-form input{min-width:0;width:100%;max-width:100%;font-family:inherit}
+
+/* Owner-authorized GitHub Autopilot queue, coding budget and five-minute schedule */
+.github-autopilot-panel{display:grid;gap:11px;padding:12px;border:1px solid var(--border,#404a58);border-radius:9px;margin:12px 0}
+.github-autopilot-panel>.accounts-head strong{display:inline-flex;align-items:center;gap:7px}
+.github-autopilot-panel p{font-size:12px;line-height:1.5;margin:1px 0}
+.github-autopilot-budget{display:flex;flex-wrap:wrap;align-items:center;gap:9px;font-size:12px}
+.github-autopilot-budget select{font:inherit;max-width:180px;min-width:130px;border:1px solid var(--border,#445161);border-radius:6px;padding:7px;color:inherit;background:var(--surface-raised,#252936)}
+.github-autopilot-warning{display:flex;align-items:flex-start;gap:6px}
+.github-autopilot-warning svg{flex-shrink:0}
+.github-autopilot-task-form{display:grid;gap:9px;padding:12px;border:1px solid var(--border,#3e4551);border-radius:8px}
+.github-autopilot-task-form strong{font-size:13px}
+.github-autopilot-task-form label{font-size:12px;font-weight:600}
+.github-autopilot-task-form textarea,.github-autopilot-task-form input{width:100%;min-width:0}
+.github-autopilot-task-form button{justify-self:start}
+.github-autopilot-task-form>a{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--accent,#9abffa);text-decoration:underline}
+.github-autopilot-issues{display:grid;gap:7px;max-height:190px;overflow:auto}
+.github-autopilot-issues>a{display:flex;align-items:center;gap:8px;font-size:12px;color:inherit;text-decoration:none;overflow-wrap:anywhere;border:1px solid var(--border,#3e4551);border-radius:6px;padding:7px}
+.github-autopilot-issues>a>span{flex:1;min-width:0;overflow-wrap:anywhere}

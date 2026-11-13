@@ -1,0 +1,93 @@
+name: Core Autopilot (opt-in)
+
+# GitHub cron may be delayed or skipped. A new run never interrupts the old one.
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-autopilot-queue
+  cancel-in-progress: false
+
+jobs:
+  claim:
+    name: Pick one explicitly approved coding issue
+    if: ${{ vars.CORE_AUTOPILOT_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      issue: ${{ steps.queue.outputs.issue }}
+      goal: ${{ steps.queue.outputs.goal }}
+      files: ${{ steps.queue.outputs.files }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Check paid coding opt-in and required provider credential
+        id: gate
+        env:
+          CODING_ENABLED: ${{ vars.CORE_AUTOPILOT_CODING_ENABLED }}
+          PROVIDER_KEY: ${{ secrets.CORE_AGENT_API_KEY }}
+        shell: bash
+        run: |
+          if [[ "$CODING_ENABLED" == "true" && -n "$PROVIDER_KEY" ]]; then
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            echo 'Paid coding is not enabled or CORE_AGENT_API_KEY is missing.'
+          fi
+      - name: Reserve approved Issue with daily limit
+        id: queue
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CORE_AUTOPILOT_DAILY_LIMIT: ${{ vars.CORE_AUTOPILOT_DAILY_LIMIT || '2' }}
+        run: node tools/core-autopilot-queue.mjs claim
+
+  coder:
+    name: Run isolated multi-agent coding workflow
+    needs: claim
+    if: ${{ needs.claim.outputs.issue != '' }}
+    uses: ./.github/workflows/core-cloud-coder.yml
+    permissions:
+      contents: write
+      pull-requests: write
+    with:
+      goal: ${{ needs.claim.outputs.goal }}
+      files: ${{ needs.claim.outputs.files }}
+    secrets:
+      CORE_AGENT_API_KEY: ${{ secrets.CORE_AGENT_API_KEY }}
+
+  report:
+    name: Record result for owner review
+    needs: [claim,coder]
+    if: ${{ always() && needs.claim.outputs.issue != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Mark Issue for manual review or failure
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CORE_AUTOPILOT_ISSUE: ${{ needs.claim.outputs.issue }}
+          CORE_AUTOPILOT_RESULT: ${{ needs.coder.result }}
+          CORE_AUTOPILOT_PR: ${{ needs.coder.outputs.pr }}
+        run: node tools/core-autopilot-queue.mjs finish

@@ -29,7 +29,7 @@ jobs:
       - name: Build the PWA
         run: pnpm web:build
       - name: Test encrypted owner vault (WebCrypto)
-        run: node --experimental-strip-types --test apps/web/test-vault.mjs apps/web/test-agent-team.mjs apps/web/test-owner-grants.mjs apps/web/test-github-workspace.mjs apps/web/test-github-actions.mjs apps/web/test-github-pull-requests.mjs apps/web/test-multifile-team.mjs apps/web/test-github-batch-pr.mjs
+        run: node --experimental-strip-types --test apps/web/test-vault.mjs apps/web/test-agent-team.mjs apps/web/test-owner-grants.mjs apps/web/test-github-workspace.mjs apps/web/test-github-actions.mjs apps/web/test-github-pull-requests.mjs apps/web/test-multifile-team.mjs apps/web/test-github-batch-pr.mjs apps/web/test-github-autopilot.mjs
       - name: Test model routing
         run: pnpm test:web
       - name: Test Worker and public model catalog
@@ -37,6 +37,6 @@ jobs:
       - name: Test remote runner policy without deployment
         run: pnpm --filter @core/remote test && pnpm --filter @core/remote check
       - name: Test independent Core Cloud Coder (no real credentials)
-        run: node --experimental-strip-types --test tools/cloud-code-agent.test.mjs
+        run: node --experimental-strip-types --test tools/cloud-code-agent.test.mjs tools/core-autopilot-queue.test.mjs
       - name: Test ChatGPT companion pairing (mock, no credentials)
         run: node --test tools/chatgpt-companion/test.mjs
