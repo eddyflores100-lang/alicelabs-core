@@ -143,6 +143,17 @@ export default function AIConnectionsHub({ chatGPTCount, apiCounts, onChatGPT, o
       <div className="ai-hub-action-row"><button className="secondary-button" onClick={()=>onApi('openrouter')}><KeyRound size={14}/> Administrar perfiles API <ArrowRight size={13}/></button></div>
     </div>
 
+    <div className="ai-hub-label">NUEVOS PROVEEDORES CON API DIRECTA</div>
+    <div className="ai-hub-native-grid">
+      {([{id:'groq',name:'Groq Cloud',description:'Modelos alojados en Groq; cuenta y clave API propias.'},
+         {id:'mistral',name:'Mistral AI',description:'Modelos Mistral; acceso autorizado mediante API.'},
+         {id:'xai',name:'xAI Grok',description:'Modelos Grok; clave emitida por xAI.'}] as const).map(item =>
+        <div key={item.id} className="ai-hub-card native-provider-card">
+          <div className="ai-hub-card-heading"><div className="ai-hub-provider-icon"><KeyRound size={19}/></div><div><strong>{item.name}</strong><span>Cuenta API del proveedor</span></div><span className="ai-hub-state api">API Core</span></div>
+          <p>{item.description} Las credenciales y los modelos se verifican al conectar.</p>
+          <button className="secondary-button" onClick={()=>onApi(item.id)}>Conectar {item.name} API <ArrowRight size={13}/></button>
+        </div>)}
+    </div>
     <div className="ai-hub-policy"><CircleHelp size={17}/><span>Los botones Antigravity, Gemini CLI y Claude Code pueden abrir los programas oficiales en una terminal local Windows, con aprobación en el Bridge; no conectan sus suscripciones al chat de AliceLabs Core. La autenticación directa de DeepSeek por correo tampoco está disponible para terceros. Las conexiones API y ChatGPT permanecen separadas y no rotan cuentas para evitar límites.</span></div>
     <div className="dialog-actions"><button className="secondary-button" onClick={onClose}>Cerrar</button></div>
   </div>;

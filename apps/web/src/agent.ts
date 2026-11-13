@@ -1,4 +1,4 @@
-export type Provider = 'openai' | 'openrouter' | 'anthropic' | 'google' | 'deepseek';
+export type Provider = 'openai' | 'openrouter' | 'anthropic' | 'google' | 'deepseek' | 'groq' | 'mistral' | 'xai';
 export type ChatMessage = { role: 'user' | 'assistant'; content: string; timestamp: number };
 export type ModelInfo = {
   id: string; name: string; context: number | null; inputPerMillion: number | null; outputPerMillion: number | null;
@@ -13,7 +13,7 @@ export type Guidance = { summary: string; steps: GuideStep[] };
 export type AgentResponse = { ok: boolean; answer?: string; error?: string; action?: 'edit' | 'chat' | 'guide'; model?: string; provider?: Provider; durationMs?: number; guide?: Guidance };
 export const DEFAULT_MODEL: Record<Provider, string> = {
   openai: 'gpt-6.1-sol', openrouter: 'openai/gpt-6.1-sol',
-  anthropic: 'claude-sonnet-4-5', google: 'gemini-2.5-flash', deepseek: 'deepseek-flash'
+  anthropic: 'claude-sonnet-4-5', google: 'gemini-2.5-flash', deepseek: 'deepseek-flash', groq: 'llama-3.3-70b-versatile', mistral: 'mistral-large-latest', xai: 'grok-4'
 };
 export const API_ENDPOINT = import.meta.env.VITE_CORE_API || 'https://alicelabs-core-agent.eddyflores100.workers.dev';
 export async function pingWorker(): Promise<boolean> {

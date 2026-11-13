@@ -11,7 +11,10 @@ const DEFAULT_MODELS = Object.freeze({
   openrouter: 'openai/gpt-6.1-sol',
   anthropic: 'claude-sonnet-4-5',
   google: 'gemini-2.5-flash',
-  deepseek: 'deepseek-flash'
+  deepseek: 'deepseek-flash',
+  groq: 'llama-3.3-70b-versatile',
+  mistral: 'mistral-large-latest',
+  xai: 'grok-4'
 });
 const MAX_BODY = 130000;
 const PROVIDERS = Object.keys(DEFAULT_MODELS);
@@ -141,6 +144,12 @@ async function listModels(provider, apiKey) {
     raw = await get('https://generativelanguage.googleapis.com/v1beta/models?pageSize=250', { 'x-goog-api-key': apiKey }, apiKey);
   } else if (provider === 'deepseek') {
     raw = await get('https://api.deepseek.com/models', { Authorization: 'Bearer ' + apiKey }, apiKey);
+  } else if (provider === 'groq') {
+    raw = await get('https://api.groq.com/openai/v1/models', { Authorization: 'Bearer ' + apiKey }, apiKey);
+  } else if (provider === 'mistral') {
+    raw = await get('https://api.mistral.ai/v1/models', { Authorization: 'Bearer ' + apiKey }, apiKey);
+  } else if (provider === 'xai') {
+    raw = await get('https://api.x.ai/v1/models', { Authorization: 'Bearer ' + apiKey }, apiKey);
   } else throw Object.assign(new Error('Proveedor no admitido'), { status: 400 });
   const items = Array.isArray(raw.data) ? raw.data : Array.isArray(raw.models) ? raw.models : [];
   const models = items.map((entry, i) => formatModel(entry, provider, i + 1)).filter(Boolean).slice(0, 180);
@@ -161,6 +170,16 @@ async function callProvider({ provider, model, apiKey, system, messages }) {
     extract = data => cleanText(data.choices?.[0]?.message?.content);
   } else if (provider === 'deepseek') {
     endpoint = 'https://api.deepseek.com/chat/completions';
+    headers = { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' };
+    body = { model, messages: [{ role: 'system', content: system }, ...messages], stream: false };
+    extract = data => cleanText(data.choices?.[0]?.message?.content);
+  } else if (provider === 'groq' || provider === 'mistral' || provider === 'xai') {
+    const urls = {
+      groq: 'https://api.groq.com/openai/v1/chat/completions',
+      mistral: 'https://api.mistral.ai/v1/chat/completions',
+      xai: 'https://api.x.ai/v1/chat/completions'
+    };
+    endpoint = urls[provider];
     headers = { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' };
     body = { model, messages: [{ role: 'system', content: system }, ...messages], stream: false };
     extract = data => cleanText(data.choices?.[0]?.message?.content);

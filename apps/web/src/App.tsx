@@ -22,6 +22,8 @@ import { chooseRoute } from './routing';
 import type { Priority } from './routing';
 import ChatGPTPanel from './ChatGPTPanel';
 import AIConnectionsHub from './AIConnectionsHub';
+import { eraseStoredVault, exportEncryptedVault, importEncryptedVault, hasStoredVault, sealConnections, unsealConnections } from './credentialVault';
+import { OWNER_REMOTE_VAULT_ENABLED, uploadEncryptedVault, fetchEncryptedVault, deleteEncryptedVault } from './ownerVaultSync';
 import InstallApp from './InstallApp';
 import VoiceInput from './VoiceInput';
 import CloudRunnerPanel from './CloudRunnerPanel';
@@ -39,7 +41,7 @@ type LogEntry = { id: number; time: string; level: 'info' | 'success' | 'error';
 type TerminalResult = { id: number; command: string; output: string; exitCode: number | null };
 const LOCAL_BRIDGE = 'http://127.0.0.1:39007';
 const labelProvider: Record<Provider, string> = {
-  openai: 'OpenAI', openrouter: 'OpenRouter', anthropic: 'Anthropic', google: 'Google Gemini', deepseek: 'DeepSeek'
+  openai: 'OpenAI', openrouter: 'OpenRouter', anthropic: 'Anthropic', google: 'Google Gemini', deepseek: 'DeepSeek', groq: 'Groq', mistral: 'Mistral', xai: 'xAI Grok'
 };
 const iconsFor = (name: string) => {
   const ext = name.split('.').pop()?.toLowerCase();
@@ -108,6 +110,10 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
   const [draftProvider, setDraftProvider] = useState<Provider>('openrouter');
   const [draftLabel, setDraftLabel] = useState('');
   const [draftKey, setDraftKey] = useState('');
+  const [vaultPassword, setVaultPassword] = useState('');
+  const [vaultExists, setVaultExists] = useState(hasStoredVault);
+  const [vaultBusy, setVaultBusy] = useState(false);
+  const [cloudVaultBusy, setCloudVaultBusy] = useState(false);
   const [addingConnection, setAddingConnection] = useState(false);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
   const [priority, setPriority] = useState<Priority>('balanced');
@@ -414,6 +420,68 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
     window.addEventListener('keydown', shortcuts);
     return () => window.removeEventListener('keydown', shortcuts);
   });
+  async function saveOwnerVault() {
+    if (vaultBusy) return;
+    setVaultBusy(true);
+    try {
+      await sealConnections(connections, vaultPassword);
+      setVaultExists(true);
+      notify('Bóveda API cifrada guardada en este navegador. Guarda tu contraseña: no puede recuperarse.');
+      setVaultPassword('');
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'No se pudo guardar la bóveda.', true);
+    } finally { setVaultBusy(false); }
+  }
+  async function unlockOwnerVault() {
+    if (vaultBusy) return;
+    setVaultBusy(true);
+    try {
+      const restored = await unsealConnections(vaultPassword);
+      setConnections(current => {
+        const seen = new Set(current.map(c => c.provider + ':' + c.apiKey));
+        return [...current, ...restored.filter(c => !seen.has(c.provider + ':' + c.apiKey))];
+      });
+      setVaultPassword('');
+      notify(restored.length + ' perfiles recuperados. Comprueba disponibilidad y créditos antes de usarlos.');
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'No se pudo desbloquear la bóveda.', true);
+    } finally { setVaultBusy(false); }
+  }
+  function clearOwnerVault() {
+    if (!window.confirm('¿Eliminar la bóveda cifrada guardada en este navegador? Las conexiones activas de esta pestaña no se eliminan.')) return;
+    try {
+      eraseStoredVault();
+      setVaultExists(false);
+      setVaultPassword('');
+      notify('Bóveda cifrada local eliminada.');
+    } catch {
+      notify('No se pudo eliminar la bóveda del navegador.', true);
+    }
+  }
+  async function syncEncryptedVault() {
+    if(cloudVaultBusy)return;
+    if(!window.confirm('¿Enviar únicamente tu bóveda CIFRADA al almacenamiento privado del propietario? El servidor no recibe la contraseña.'))return;
+    setCloudVaultBusy(true);
+    try {await uploadEncryptedVault(exportEncryptedVault());notify('Bóveda cifrada sincronizada con tu identidad de Cloudflare Access.');}
+    catch(e){notify(e instanceof Error?e.message:'No se pudo subir la bóveda cifrada.',true);}
+    finally{setCloudVaultBusy(false);}
+  }
+  async function recoverEncryptedVault() {
+    if(cloudVaultBusy)return;
+    if(vaultExists && !window.confirm('¿Sustituir la copia CIFRADA de este navegador por la del servidor privado? Las conexiones activas no se modifican.'))return;
+    setCloudVaultBusy(true);
+    try {const envelope=await fetchEncryptedVault();importEncryptedVault(envelope);setVaultExists(true);
+      notify('Bóveda cifrada recuperada. Introduce su contraseña y pulsa Desbloquear cuentas.');}
+    catch(e){notify(e instanceof Error?e.message:'No se pudo recuperar la bóveda.',true);}
+    finally{setCloudVaultBusy(false);}
+  }
+  async function removeCloudVault() {
+    if(cloudVaultBusy || !window.confirm('¿Borrar la bóveda sincronizada del servidor del propietario? La copia local no se elimina.'))return;
+    setCloudVaultBusy(true);
+    try{await deleteEncryptedVault();notify('Copia remota cifrada eliminada.');}
+    catch(e){notify(e instanceof Error?e.message:'No se pudo eliminar la copia remota.',true);}
+    finally{setCloudVaultBusy(false);}
+  }
   async function addConnection(e: FormEvent) {
     e.preventDefault();
     const key = draftKey.trim();
@@ -876,7 +944,27 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
         {dialog==='settings' && <div className="dialog-content connection-manager">
           <button className="secondary-button" onClick={() => setDialog('providers')}><Layers3 size={15}/> Volver al centro de proveedores</button>
           <button className="siwc-link" onClick={() => {setAuthMode('chatgpt');setDialog('chatgpt');}}><Bot size={17}/><span><strong>Iniciar sesión con ChatGPT</strong><small>Con correo, sin clave API · conexiones múltiples</small></span><ArrowRight size={16}/></button>
-          <p>Conecta varias claves API, incluso del mismo proveedor. Cada perfil se verifica contra su API y descubre sus modelos. Las claves viven <strong>solo en esta pestaña</strong>; no se guardan en disco ni en Cloudflare.</p>
+          <p>Conecta varias claves API, incluso del mismo proveedor. Cada perfil se verifica contra su API y descubre sus modelos. Las claves activas viven en esta pestaña. Opcionalmente puedes guardar una copia cifrada en este navegador mediante la bóveda del propietario; no se envía a Cloudflare.</p>
+          <section className="owner-vault" aria-label="Bóveda cifrada de cuentas API">
+            <div className="accounts-head"><strong>Bóveda cifrada del propietario</strong><span>{vaultExists ? 'Guardada en este dispositivo' : 'Sin configurar'}</span></div>
+            <p>Protege tus perfiles API con una contraseña propia. El cifrado AES-GCM se realiza en este navegador antes de guardarlos. No sincroniza entre equipos ni incluye sesiones OAuth o CLI. Al conectar o quitar claves, vuelve a guardar la bóveda para actualizarla.</p>
+            <label htmlFor="owner-vault-password">Contraseña de la bóveda (mínimo 12 caracteres)</label>
+            <div className="input-with-icon"><LockKeyhole size={16}/><input id="owner-vault-password" type="password" autoComplete="off" value={vaultPassword} onChange={e=>setVaultPassword(e.target.value)} placeholder="Contraseña privada del propietario"/></div>
+            <div className="dialog-actions">
+              <button type="button" className="primary-button" disabled={vaultBusy || vaultPassword.length < 12} onClick={()=>void saveOwnerVault()}>{vaultBusy ? 'Procesando…' : vaultExists ? 'Actualizar bóveda cifrada' : 'Guardar bóveda cifrada'}</button>
+              {vaultExists && <button type="button" className="secondary-button" disabled={vaultBusy || !vaultPassword} onClick={()=>void unlockOwnerVault()}>Desbloquear cuentas</button>}
+              {vaultExists && <button type="button" className="secondary-button" disabled={vaultBusy} onClick={clearOwnerVault}>Eliminar bóveda local</button>}
+            </div>
+            <p>No compartas esta contraseña. Si la pierdes, deberás crear una bóveda nueva y volver a conectar tus API. En equipos compartidos, no guardes credenciales.</p>
+            {OWNER_REMOTE_VAULT_ENABLED ? <div className="owner-vault-remote">
+              <p><strong>Sincronización privada entre web y móvil.</strong> Solo se transfiere el archivo cifrado. Cloudflare Access identifica al propietario; necesitas la contraseña para abrirlo en otro dispositivo.</p>
+              <div className="dialog-actions">
+                <button type="button" className="secondary-button" disabled={cloudVaultBusy||!vaultExists} onClick={()=>void syncEncryptedVault()}>Sincronizar bóveda cifrada</button>
+                <button type="button" className="secondary-button" disabled={cloudVaultBusy} onClick={()=>void recoverEncryptedVault()}>Recuperar desde la nube</button>
+                <button type="button" className="secondary-button" disabled={cloudVaultBusy} onClick={()=>void removeCloudVault()}>Borrar copia remota</button>
+              </div>
+            </div> : <p>La sincronización entre dispositivos requiere un servidor privado configurado y autenticación de Cloudflare Access.</p>}
+          </section>
           <div className="route-controls">
             <label>Prioridad del agente<select value={priority} onChange={e => setPriority(e.target.value as Priority)}><option value="balanced">Equilibrada · recomendada</option><option value="quality">Máxima calidad aproximada</option><option value="economy">Economía y velocidad</option></select></label>
             <label>Cuenta autorizada<select value={selectedProfile} onChange={e => { setSelectedProfile(e.target.value); setSelectedModel('auto'); }}><option value="auto">Automático entre mis conexiones</option>{connections.map(c => <option key={c.id} value={c.id}>{c.label} ({labelProvider[c.provider]})</option>)}</select></label>
