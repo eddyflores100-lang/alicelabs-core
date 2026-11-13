@@ -7,6 +7,9 @@
   "scripts": {
     "dev": "pnpm --filter @core/desktop dev",
     "build": "pnpm --filter @core/desktop build",
+    "web:dev": "pnpm --filter @core/web dev",
+    "web:build": "pnpm --filter @core/web build",
+    "agent:check": "node --check apps/api/src/index.js",
     "typecheck": "pnpm --recursive typecheck"
   }
 }

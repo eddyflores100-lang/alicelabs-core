@@ -1,0 +1,47 @@
+# AliceLabs Core Web
+
+La interfaz web funciona en Cloudflare Pages (no depende de Tauri). Cloudflare Workers procesa las peticiones a proveedores de IA (BYOK).
+
+## Funciones operativas
+
+- Abrir carpetas locales en Chrome / Edge usando File System Access API.
+- Leer, editar, crear y guardar archivos de texto. Ctrl+S para guardar.
+- Pestañas, búsqueda por nombre/ruta, lista de cambios aún sin guardar y panel de eventos.
+- Explorar cualquier repositorio público de GitHub en modo lectura.
+- Asistente conectado a OpenAI, OpenRouter, Anthropic y Google mediante el Worker.
+- Solicitar edición de un archivo, comparar diff y aplicar el resultado manualmente.
+- Terminal local opcional mediante Core Local Bridge: token temporal y aprobación desde la consola local para cada comando.
+
+## Configuración local
+
+```bash
+cd apps/web
+npm install
+npm run dev
+```
+
+## Construir para Cloudflare Pages
+
+```bash
+cd apps/web
+npm install
+npm run build
+```
+
+Publicar el directorio `apps/web/dist`. El script copia Monaco a `public/vs` durante el build para que no dependa de ningún CDN.
+
+## Backend Cloudflare Worker
+
+`apps/api/src/index.js` implementa `GET /api/health` y `POST /api/agent`. Por defecto el frontend usa `https://alicelabs-core-agent.eddyflores100.workers.dev`. Si cambia la cuenta, define `VITE_CORE_API` en el build de Pages.
+
+**Protección de credenciales:** claves sólo en la memoria de esta pestaña, no en localStorage, Git, logs, D1, R2, ni Workers KV. Cada usuario facilita su propia clave de proveedor. El Worker no ejecuta herramientas de terminal.
+
+## Limitaciones intencionales
+
+- El acceso GitHub aquí es público y lectura. Privados/commit/push requieren una integración OAuth o GitHub App por usuario todavía pendiente.
+- En navegación remota no puede usarse una terminal de la máquina sin un bridge local explícito.
+- Un Worker no ofrece Linux shell. Para agentes con comandos remotos es necesaria una ejecución aislada (Cloudflare Sandbox/Containers) con autenticación, permisos y presupuesto.
+- La edición propuesta por modelo no se guarda automáticamente; requiere revisión, aplicación y Ctrl+S.
+- La carpeta local no se sube automáticamente a Cloudflare. Sólo se transmite contenido de archivo activo cuando el usuario lo incluye en la consulta o selecciona edición.
+
+Seguridad del Bridge: se escucha sólo en `127.0.0.1:39007`; requiere token aleatorio de sesión, origen Pages autorizado y confirmación `SI` en terminal por cada comando. **No exponer el puerto a internet ni usar túneles.**
