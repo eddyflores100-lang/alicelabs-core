@@ -1,0 +1,36 @@
+name: Core CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  web-and-worker:
+    name: Web build & agent tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build the PWA
+        run: pnpm web:build
+      - name: Test model routing
+        run: pnpm test:web
+      - name: Test Worker and public model catalog
+        run: pnpm test:worker
+      - name: Test ChatGPT companion pairing (mock, no credentials)
+        run: node --test tools/chatgpt-companion/test.mjs
