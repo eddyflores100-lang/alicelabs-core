@@ -20,6 +20,9 @@ import { discoverModels, pingWorker, requestAgent } from './agent';
 import type { ChatMessage, Provider, Connection, Guidance, GuideStep, AgentResponse } from './agent';
 import { chooseRoute } from './routing';
 import {runAgentEditTeam} from './agentTeam';
+import {runBatchCodingTeam,applyBatchDraft} from './multiFileTeam';
+import type {BatchProposal} from './multiFileTeam';
+import {createGithubBatchPR} from './githubBatchPullRequest';
 import {grantedProfiles} from './ownerGrants';
 import {githubFileCommit,githubFileCreate,githubProposePullRequest} from './githubWorkspace';
 import GithubActionsPanel from './GithubActionsPanel';
@@ -41,7 +44,7 @@ import type { ChatGPTAccount, ChatGPTModel } from './chatgpt';
 // Load Monaco from same-origin static assets; no CDN and no 7 MB bundler worker.
 loader.config({ paths: { vs: '/vs' } });
 type Section = 'files' | 'search' | 'changes' | 'activity';
-type Dialog = 'github' | 'github-actions' | 'github-pulls' | 'new' | 'settings' | 'chatgpt' | 'providers' | 'commands' | 'bridge' | 'cloud' | 'diff' | null;
+type Dialog = 'batch-diff' | 'github' | 'github-actions' | 'github-pulls' | 'new' | 'settings' | 'chatgpt' | 'providers' | 'commands' | 'bridge' | 'cloud' | 'diff' | null;
 type LogEntry = { id: number; time: string; level: 'info' | 'success' | 'error'; text: string };
 type TerminalResult = { id: number; command: string; output: string; exitCode: number | null };
 const LOCAL_BRIDGE = 'http://127.0.0.1:39007';
@@ -152,6 +155,12 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [agentBusy, setAgentBusy] = useState(false);
   const [useSubagents, setUseSubagents] = useState(true);
+  const [multiFileMode,setMultiFileMode]=useState(false);
+  const [batchProposal,setBatchProposal]=useState<BatchProposal|null>(null);
+  const [batchReviewIndex,setBatchReviewIndex]=useState(0);
+  const [batchReviewedPaths,setBatchReviewedPaths]=useState<Set<string>>(new Set());
+  const [batchPublishing,setBatchPublishing]=useState(false);
+  const [batchGithubUrl,setBatchGithubUrl]=useState<string|null>(null);
   const [notifyOnFinish, setNotifyOnFinish] = useState(false);
   const [proposal, setProposal] = useState<{ path: string; next: string; original: string; teamReview?:string;teamApproved?:boolean;teamCalls?:number } | null>(null);
   const [agentWidth, setAgentWidth] = useState(380);
@@ -285,6 +294,7 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
     setGithubPullRequestUrl('');
     importedContents.current.clear();
     if(next.kind!=='github')setGithubToken('');
+    setBatchProposal(null);setBatchGithubUrl(null);setBatchReviewedPaths(new Set());setProposal(null);
     setWorkspace(next); setDocs([]); setActivePath(null); setExpanded(new Set(next.nodes.filter(n => n.kind === 'directory').slice(0, 7).map(n => n.path)));
     setHistory([]); setGuidance(null); setProposal(null); setSection('files'); setDialog(null);
     log('Proyecto abierto: ' + next.name + (next.kind === 'github' ? ' · GitHub lectura' : ' · Carpeta local'));
@@ -759,7 +769,9 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
       setDialog('settings');
       return;
     }
-    if (agentMode === 'edit' && (!active || active.readOnly)) {
+    if(agentMode==='edit'&&multiFileMode&&authMode==='chatgpt'){notify('Edición multiarchivo requiere una cuenta API autorizada.',true);return;}
+    if(agentMode==='edit'&&multiFileMode&&docs.filter(d=>!d.readOnly).length<2){notify('Abre al menos dos archivos editables para el lote.',true);return;}
+    if (agentMode === 'edit' && !multiFileMode && (!active || active.readOnly)) {
       notify('Abre un archivo local editable para proponer cambios', true);
       return;
     }
@@ -778,6 +790,28 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
     setLastRoute(route ? { model: route.model.id, provider: route.connection.provider, profile: route.connection.label, reason: route.reason } : null);
     const selectedLabel = loginMode ? (chatAccount?.email || 'ChatGPT') : (route?.connection.label || 'modelo');
     try {
+      if(agentMode==='edit'&&multiFileMode&&!loginMode){
+        const selectedFiles=docs.filter(d=>!d.readOnly).slice(0,8).map(d=>({path:d.path,text:d.text}));
+        const batch=await runBatchCodingTeam({
+          goal:prompt,files:selectedFiles,
+          call:async(_role,message,context)=>{
+            const reply=await requestAgent({
+              provider:route!.connection.provider,model:route!.model.id,apiKey:route!.connection.apiKey,
+              action:'chat',question:message,code:context,project:workspace?.name||'',
+              path:'Lote de archivos del proyecto'
+            });
+            return reply.answer||'';
+          }
+        });
+        setProposal(null);setBatchProposal(batch);setBatchReviewIndex(0);setBatchReviewedPaths(new Set());setBatchGithubUrl(null);
+        setHistory(prev=>[...prev,{role:'assistant',content:'Lote multiarchivo: '+batch.changes.length+
+          ' archivos propuestos; '+batch.calls+' llamadas API. Revisor: '+
+          (batch.approved?'aprobó técnicamente':'detectó problemas; lote bloqueado')+
+          '. Plan: '+batch.plan.slice(0,1200)+' Revisión: '+batch.review.slice(0,1500),timestamp:Date.now()}]);
+        notify('Propuesta multiarchivo preparada. Revisa los diffs antes de aplicar.');
+        completeTaskNotice('Revisión multiarchivo lista: '+batch.changes.length+' archivos');
+        return;
+      }
       const teamResult = agentMode==='edit' && !loginMode && useSubagents ? await runAgentEditTeam({
         request:prompt,original:before,path:filepath,project:projectContext,
         call:async input=>requestAgent({
@@ -798,6 +832,7 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
       });
       if (agentMode === 'edit') {
         if (typeof result.answer !== 'string' || !result.answer.trim()) throw new Error('El modelo no devolvió contenido válido');
+        setBatchProposal(null);
         setProposal({ path: filepath, next: result.answer, original: before,
           ...(teamResult?{teamReview:teamResult.review,teamApproved:teamResult.approved,teamCalls:teamResult.modelCalls}:{})
         });
@@ -823,6 +858,49 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
     } finally {
       setAgentBusy(false);
     }
+  }
+  async function publishBatchGithubPR(){
+    if(!batchProposal||!batchProposal.approved||batchPublishing||
+       !batchProposal.changes.every(c=>batchReviewedPaths.has(c.path)))return;
+    if(!workspace?.github||!githubToken||!workspace.github.writable)return;
+    if(!batchProposal.changes.every(change=>docs.some(d=>d.path===change.path&&d.sha&&!d.readOnly&&d.text===change.original))){
+      notify('El lote cambió: actualiza los archivos GitHub antes de publicar.',true);return;
+    }
+    const files=batchProposal.changes.map(change=>{
+      const doc=docs.find(d=>d.path===change.path);
+      if(!doc||!doc.sha||doc.readOnly||doc.text!==change.original)
+        throw new Error('Todos los archivos deben ser versiones GitHub no modificadas, con SHA original: '+change.path);
+      return {path:change.path,content:change.next,expectedSha:doc.sha};
+    });
+    const title=(githubCommitMessage.trim()||'Core: edición multiarchivo revisada').slice(0,180);
+    if(!window.confirm('¿Crear un Pull Request de '+files.length+' archivos en '+workspace.name+
+      '?\n\n'+title+'\n\nSe publicará una RAMA NUEVA con un solo commit; main no cambia. Revisa los tests antes de fusionar.'))return;
+    setBatchPublishing(true);
+    try{
+      const result=await createGithubBatchPR({
+        repo:{...workspace.github,private:workspace.github.private===true},
+        token:githubToken,files,title,message:title
+      });
+      setBatchGithubUrl(result.url);
+      notify('PR multiarchivo publicado con '+result.files+' archivos. Revisar: '+result.url);
+      completeTaskNotice('Pull Request multiarchivo listo para revisar.');
+    }catch(error){notify(error instanceof Error?error.message:'GitHub no pudo publicar el lote',true);}
+    finally{setBatchPublishing(false);}
+  }
+  function applyMultiFileProposal(){
+    if(!batchProposal||!batchProposal.approved||
+      !batchProposal.changes.every(c=>batchReviewedPaths.has(c.path))){
+      notify('Revisa cada diferencia y comprueba la aprobación del equipo antes de aplicar.',true);return;
+    }
+    try{
+      const updated=applyBatchDraft(docs,batchProposal);
+      for(const change of batchProposal.changes){
+        if(importedContents.current.has(change.path))importedContents.current.set(change.path,change.next);
+      }
+      setDocs(updated);setActivePath(batchProposal.changes[0].path);
+      notify(batchProposal.changes.length+' archivos actualizados EN MEMORIA; revisa y guarda/publica cada archivo.');
+      setBatchProposal(null);setBatchReviewedPaths(new Set());setDialog(null);
+    }catch(error){notify(error instanceof Error?error.message:'Los archivos cambiaron; lote cancelado',true);}
   }
   function applyProposal() {
     if (!proposal) return;
@@ -1050,11 +1128,20 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
           {history.map((m,i) => <div key={i} className={'chat-message '+m.role}><div className="chat-author">{m.role==='user'?'Tú':'CORE AGENT'}<span>{new Date(m.timestamp).toLocaleTimeString('es-EC',{hour:'2-digit',minute:'2-digit'})}</span></div><div className="chat-text">{m.content}</div></div>)}
           {agentBusy && <div className="agent-thinking"><LoaderCircle size={15} className="spin"/> Consultando {authMode==='chatgpt'?(chatGPTAccounts.find(a=>a.id===chatGPTActiveId)?.email||'ChatGPT'):(lastRoute?.profile||'modelo')}...</div>}
           {guidance && <div className="guide-plan"><div className="guide-plan-title"><Bot size={16}/> Plan de trabajo <span>{guidance.steps.length} pasos</span></div>{guidance.steps.map((step,i) => <div className="guide-step" key={i}><div className="guide-step-number">{i+1}</div><div className="guide-step-body"><strong>{step.title}</strong><p>{step.description}</p>{step.action && <button onClick={() => runGuideStep(step.action, step.command)}>{step.action==='run_command'?'Preparar comando':'Abrir acción'} <ArrowRight size={12}/></button>}</div></div>)}</div>}
+          {batchProposal&&<div className="proposal-card">
+            <div className="proposal-header"><CheckCircle2 size={16}/><strong>Lote multiarchivo · {batchProposal.changes.length} archivos</strong></div>
+            <p>{batchProposal.calls} consultas API · {batchProposal.approved?'Revisión técnica favorable':'El revisor bloqueó la propuesta'}. Ningún cambio se ha aplicado.</p>
+            <div className="proposal-actions"><button className="secondary-button" type="button" onClick={()=>setBatchProposal(null)}>Descartar lote</button>
+              <button className="secondary-button" type="button" onClick={()=>{setBatchReviewIndex(0);setDialog('batch-diff');}}><Code2 size={14}/> Revisar cambios de todos los archivos</button>
+            </div>
+          </div>}
           {proposal && <div className="proposal-card"><div className="proposal-header"><CheckCircle2 size={16}/><strong>Propuesta preparada</strong></div><div className="proposal-path">{proposal.path}</div>{proposal.teamReview && <p>Equipo de subagentes · {proposal.teamCalls||0} consultas · {proposal.teamApproved?'Revisión favorable':'Revisión con observaciones; no aplicable'}.</p>}<div className="proposal-stats"><span>{proposal.original.split('\n').length} líneas actuales</span><ArrowRight size={13}/><span>{proposal.next.split('\n').length} propuestas</span></div><p>El cambio no se aplicará sin tu aprobación. Luego podrás guardarlo.</p><div className="proposal-actions"><button onClick={() => setProposal(null)} className="secondary-button">Descartar</button><button onClick={() => setDialog('diff')} className="secondary-button"><Code2 size={14}/> Revisar diff</button><button onClick={applyProposal} className="primary-button" disabled={proposal.teamApproved===false}><Check size={14}/> Aplicar al editor</button></div></div>}
         </div>
         <div className="agent-compose">
           <div className="composer-tabs"><button className={agentMode==='chat'?'mode-active':''} onClick={() => setAgentMode('chat')}><MessageSquareText size={13}/> Preguntar</button><button className={agentMode==='edit'?'mode-active':''} onClick={() => setAgentMode('edit')}><Code2 size={13}/> Editar</button><button className={agentMode==='guide'?'mode-active':''} onClick={() => setAgentMode('guide')}><Bot size={13}/> Guía</button></div>
-          {agentMode==='edit' && <label className="agent-team-toggle"><input type="checkbox" checked={useSubagents} onChange={e=>setUseSubagents(e.target.checked)} disabled={authMode==='chatgpt'||agentBusy}/><span>Equipo de subagentes: planificar → programar → revisar (hasta 5 solicitudes API; ninguna edición automática)</span></label>}
+                    {agentMode==='edit'&&<label className="agent-team-toggle"><input type="checkbox" checked={multiFileMode} onChange={e=>setMultiFileMode(e.target.checked)} disabled={authMode==='chatgpt'||agentBusy}/>
+            <span>Edición multiarchivo: planificar → programar → revisar hasta 8 archivos abiertos ({docs.filter(d=>!d.readOnly).length} editables)</span></label>}
+          {!multiFileMode&&agentMode==='edit' && <label className="agent-team-toggle"><input type="checkbox" checked={useSubagents} onChange={e=>setUseSubagents(e.target.checked)} disabled={authMode==='chatgpt'||agentBusy}/><span>Equipo de subagentes: planificar → programar → revisar (hasta 5 solicitudes API; ninguna edición automática)</span></label>}
           <form onSubmit={askAgent} className="compose-box"><textarea rows={3} value={question} onChange={e => setQuestion(e.target.value)} onKeyDown={e => { if (e.key==='Enter' && !e.shiftKey) {e.preventDefault(); void askAgent();} }} placeholder={agentMode==='edit'?'Describe el cambio que quieres aplicar...':agentMode==='guide'?'¿Qué quieres hacer? Te guiaré paso a paso.':'Pregunta sobre tu código o proyecto...'} disabled={agentBusy}/><div className="compose-bottom"><div className="context-options"><label className="file-context-toggle"><input type="checkbox" checked={agentMode==='edit' || includeFile} onChange={e=>setIncludeFile(e.target.checked)} disabled={agentMode==='edit' || !active}/><span>{agentMode==='edit' ? 'Archivo activo' : 'Archivo'}</span></label><label className="file-context-toggle"><input type="checkbox" checked={includeProject} onChange={e=>setIncludeProject(e.target.checked)} disabled={!workspace}/><span>Mapa proyecto</span></label></div><VoiceInput disabled={agentBusy} onTranscript={text=>setQuestion(prev=>(prev.trim()?prev.trim()+' ':'')+text)} onNotice={notify}/><button className="send-button" type="submit" disabled={agentBusy || !question.trim()} title="Enviar al agente">{agentBusy ? <LoaderCircle size={17} className="spin"/> : <ArrowRight size={18}/>}</button></div></form>
           <div className="agent-disclaimer"><ShieldCheck size={12}/> {authMode==='chatgpt'?'Autorización oficial · credenciales solo en el compañero local':'Claves API solo en memoria'} · Sin evasión de límites</div>
         </div>
@@ -1069,8 +1156,29 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
       <button onClick={() => {setSidebarOpen(false);setAgentOpen(false);setBottomOpen(true);setBottomTab('terminal');}}><SquareTerminal size={19}/><span>Consola</span></button>
     </nav>}
     {toast && <div className="toast" role="status"><CircleDot size={15}/>{toast}<button onClick={()=>setToast('')}><X size={14}/></button></div>}
-    {dialog && <div className="modal-backdrop" onMouseDown={e => {if(e.target===e.currentTarget)setDialog(null);}}><div className={'dialog '+(dialog==='commands'?'command-dialog':dialog==='diff'?'diff-dialog':dialog==='settings'?'settings-dialog':dialog==='chatgpt'?'chatgpt-dialog':dialog==='providers'?'ai-hub-dialog':dialog==='cloud'?'cloud-dialog':dialog==='github-actions'?'settings-dialog':dialog==='github-pulls'?'settings-dialog':'')} role="dialog" aria-modal="true">
-      {dialog==='diff' && proposal ? <><div className="dialog-top"><div><span className="dialog-eyebrow">REVISIÓN DE CAMBIOS</span><h3>{proposal.path}</h3></div><button className="dialog-close" onClick={()=>setDialog(null)}><X size={18}/></button></div><div className="diff-body"><DiffEditor original={proposal.original} modified={proposal.next} language={languageOf(proposal.path)} theme="vs-dark" options={{ readOnly: true, automaticLayout:true, minimap:{enabled:false}, fontSize:12, renderSideBySide: true, scrollBeyondLastLine:false }} /></div><div className="dialog-actions diff-actions"><button className="secondary-button" onClick={()=>setDialog(null)}>Volver</button><button className="primary-button" disabled={proposal.teamApproved===false} onClick={()=>{if(proposal.teamApproved!==false){applyProposal();setDialog(null);}}}><Check size={14}/> Aplicar al editor</button></div></> : dialog==='commands' ? <><div className="command-input"><Search size={19}/><input autoFocus placeholder="Escribe una acción o un archivo..." value={commandFilter} onChange={e=>setCommandFilter(e.target.value)}/><kbd>ESC</kbd></div><div className="command-list">{visibleCommands.map((item,i)=><button key={i} onClick={item.action}><item.icon size={17}/><div><strong>{item.title}</strong><small>{item.detail}</small></div><ArrowRight size={14}/></button>)}</div><div className="command-footer"><Keyboard size={13}/> Acciones y archivos del proyecto</div></>
+    {dialog && <div className="modal-backdrop" onMouseDown={e => {if(e.target===e.currentTarget)setDialog(null);}}><div className={'dialog '+(dialog==='commands'?'command-dialog':dialog==='batch-diff'?'diff-dialog':dialog==='diff'?'diff-dialog':dialog==='settings'?'settings-dialog':dialog==='chatgpt'?'chatgpt-dialog':dialog==='providers'?'ai-hub-dialog':dialog==='cloud'?'cloud-dialog':dialog==='github-actions'?'settings-dialog':dialog==='github-pulls'?'settings-dialog':'')} role="dialog" aria-modal="true">
+      {dialog==='batch-diff'&&batchProposal?<><div className="dialog-top"><div><span className="dialog-eyebrow">REVISIÓN MULTIARCHIVO</span><h3>{batchProposal.changes.length} archivos · {batchProposal.approved?'Revisión técnica favorable':'Cambio bloqueado por el revisor'}</h3></div>
+        <button className="dialog-close" onClick={()=>setDialog(null)}><X size={18}/></button></div>
+        <div className="batch-file-tabs">{batchProposal.changes.map((change,i)=><button type="button" key={change.path} className={batchReviewIndex===i?'selected':''} onClick={()=>setBatchReviewIndex(i)}>
+          {batchReviewedPaths.has(change.path)?'✓ ':''}{change.path}</button>)}</div>
+        <div className="diff-body"><DiffEditor key={batchProposal.changes[batchReviewIndex]?.path} original={batchProposal.changes[batchReviewIndex]?.original||''}
+          modified={batchProposal.changes[batchReviewIndex]?.next||''} language={languageOf(batchProposal.changes[batchReviewIndex]?.path||'txt')} theme="vs-dark"
+          options={{readOnly:true,automaticLayout:true,minimap:{enabled:false},fontSize:12,renderSideBySide:!mobile,scrollBeyondLastLine:false}}/></div>
+        <label className="batch-review-confirm"><input type="checkbox" checked={batchReviewedPaths.has(batchProposal.changes[batchReviewIndex].path)}
+          onChange={e=>{const path=batchProposal.changes[batchReviewIndex].path;setBatchReviewedPaths(prev=>{const next=new Set(prev);if(e.target.checked)next.add(path);else next.delete(path);return next;});}}/>
+          He revisado las diferencias de este archivo.</label>
+        <div className="dialog-actions diff-actions"><button type="button" className="secondary-button" onClick={()=>setDialog(null)}>Volver sin aplicar</button>
+          <button type="button" className="primary-button" disabled={!batchProposal.approved||!batchProposal.changes.every(c=>batchReviewedPaths.has(c.path))}
+            onClick={applyMultiFileProposal}><Check size={14}/> Aplicar lote en memoria ({batchReviewedPaths.size}/{batchProposal.changes.length})</button>
+          {workspace?.kind==='github'&&githubToken&&<button type="button" className="secondary-button"
+            disabled={!batchProposal.approved||batchPublishing||batchProposal.changes.length<2||!batchProposal.changes.every(c=>batchReviewedPaths.has(c.path))||
+              !batchProposal.changes.every(c=>docs.some(d=>d.path===c.path&&d.sha&&!d.readOnly))}
+            onClick={()=>void publishBatchGithubPR()}><Github size={14}/>
+            {batchPublishing?'Publicando PR…':'Crear PR multiarchivo (sin tocar main)'}</button>}
+          {batchGithubUrl&&<a href={batchGithubUrl} target="_blank" rel="noopener noreferrer">Abrir PR multiarchivo en GitHub</a>}
+        </div>
+      </>:
+      dialog==='diff' && proposal ? <><div className="dialog-top"><div><span className="dialog-eyebrow">REVISIÓN DE CAMBIOS</span><h3>{proposal.path}</h3></div><button className="dialog-close" onClick={()=>setDialog(null)}><X size={18}/></button></div><div className="diff-body"><DiffEditor original={proposal.original} modified={proposal.next} language={languageOf(proposal.path)} theme="vs-dark" options={{ readOnly: true, automaticLayout:true, minimap:{enabled:false}, fontSize:12, renderSideBySide: true, scrollBeyondLastLine:false }} /></div><div className="dialog-actions diff-actions"><button className="secondary-button" onClick={()=>setDialog(null)}>Volver</button><button className="primary-button" disabled={proposal.teamApproved===false} onClick={()=>{if(proposal.teamApproved!==false){applyProposal();setDialog(null);}}}><Check size={14}/> Aplicar al editor</button></div></> : dialog==='commands' ? <><div className="command-input"><Search size={19}/><input autoFocus placeholder="Escribe una acción o un archivo..." value={commandFilter} onChange={e=>setCommandFilter(e.target.value)}/><kbd>ESC</kbd></div><div className="command-list">{visibleCommands.map((item,i)=><button key={i} onClick={item.action}><item.icon size={17}/><div><strong>{item.title}</strong><small>{item.detail}</small></div><ArrowRight size={14}/></button>)}</div><div className="command-footer"><Keyboard size={13}/> Acciones y archivos del proyecto</div></>
       : <><div className="dialog-top"><div><span className="dialog-eyebrow">ALICELABS CORE</span><h3>{dialog==='github'?'Abrir repositorio GitHub':dialog==='github-actions'?'GitHub Actions del proyecto':dialog==='github-pulls'?'Pull Requests del proyecto':dialog==='new'?'Nuevo archivo':dialog==='settings'?'Cuentas API y modelos':dialog==='chatgpt'?'Conectar cuentas ChatGPT':dialog==='providers'?'Proveedores y cuentas de IA':dialog==='cloud'?'Nube privada del proyecto':'Conectar terminal local'}</h3></div><button className="dialog-close" onClick={()=>setDialog(null)}><X size={18}/></button></div>
         {dialog==='github' && <form onSubmit={openGithub} className="dialog-content">
           <p>Abre repositorios públicos en lectura o conecta tu cuenta GitHub con un token restringido. No se guarda ningún token en disco, IndexedDB ni en el repositorio.</p>
