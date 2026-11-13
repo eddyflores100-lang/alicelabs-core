@@ -31,7 +31,16 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
-      - uses: android-actions/setup-android@v3
+      - name: Validate preinstalled Android SDK
+        shell: bash
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "Android SDK: $SDK"
+          test -d "$SDK" || { echo 'No Android SDK found on runner'; exit 1; }
+          if [ ! -d "$SDK/platforms/android-36" ]; then
+            echo 'Installing Android 36 platform'
+            "$SDK/cmdline-tools/latest/bin/sdkmanager" --install 'platforms;android-36'
+          fi
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
       - name: Build web assets
