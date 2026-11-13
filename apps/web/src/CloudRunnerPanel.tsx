@@ -30,6 +30,11 @@ export default function CloudRunnerPanel({projectId,workspaceName,activeFile,onN
   const [busy,setBusy]=useState(false);
   const [command,setCommand]=useState('0');
   const [result,setResult]=useState('');
+  const [notifyEnabled,setNotifyEnabled]=useState(false);
+  const [notifyConfigured,setNotifyConfigured]=useState(false);
+  const [notifyRecipient,setNotifyRecipient]=useState<string|null>(null);
+  const [notifyPhone,setNotifyPhone]=useState('');
+  const [notifyConsent,setNotifyConsent]=useState(false);
   const endpoint=REMOTE+'/v1/projects/'+encodeURIComponent(projectId);
   async function call(route:string,method:'GET'|'POST'|'PUT'='GET',body?:string){
     if(!REMOTE)throw new Error('No existe un servidor remoto configurado con Cloudflare Access');
@@ -39,7 +44,7 @@ export default function CloudRunnerPanel({projectId,workspaceName,activeFile,onN
     const contentType=r.headers.get('content-type')||'';
     if(!contentType.includes('application/json') && !(route.startsWith('/files/') && method==='GET'))
       throw new Error('Se necesita autenticación de Cloudflare Access. Abre la página del servidor para iniciar sesión.');
-    const response=await r.json() as {ok?:boolean;error?:string;output?:string;exitCode?:number;files?:number;running?:boolean};
+    const response=await r.json() as {ok?:boolean;error?:string;output?:string;exitCode?:number;files?:number;running?:boolean;enabled?:boolean;configured?:boolean;recipient?:string|null};
     if(!r.ok||response.error)throw new Error(response.error||'Error remoto '+r.status);
     return response;
   }
@@ -48,8 +53,33 @@ export default function CloudRunnerPanel({projectId,workspaceName,activeFile,onN
     try{
       const r=await call('/status');
       setStatus('online');
+      try {
+        const current=await call('/notify');
+        setNotifyEnabled(current.enabled===true);
+        setNotifyConfigured(current.configured===true);
+        setNotifyRecipient(current.recipient||null);
+      } catch { setNotifyConfigured(false); }
       setResult('Proyecto autenticado · '+String(r.files||0)+' archivos · '+(r.running?'Entorno activo':'Entorno detenido'));
     }catch(e){setStatus('error');setResult(e instanceof Error?e.message:'No se pudo verificar la sesión');}
+    finally{setBusy(false);}
+  }
+  async function saveNotification(enabled:boolean){
+    if(enabled && (!notifyConsent || !/^\+[1-9]\d{7,14}$/.test(notifyPhone.trim()))){
+      onNotice('Indica número E.164 y acepta recibir avisos antes de activar WhatsApp.',true);
+      return;
+    }
+    if(!window.confirm(enabled
+      ? '¿Activar avisos automáticos de tareas terminadas a este número por WhatsApp oficial?'
+      : '¿Desactivar avisos automáticos de este proyecto?'))return;
+    setBusy(true);
+    try {
+      const body=enabled?{enabled:true,optIn:true,to:notifyPhone.trim()}:{enabled:false};
+      const r=await call('/notify','PUT',JSON.stringify(body));
+      setNotifyEnabled(r.enabled===true);
+      setNotifyPhone('');setNotifyConsent(false);
+      setNotifyRecipient(enabled?'Número registrado (oculto)':null);
+      onNotice(enabled?'Avisos WhatsApp habilitados para este proyecto':'Avisos WhatsApp desactivados');
+    }catch(e){onNotice(e instanceof Error?e.message:'No se pudo cambiar la suscripción',true);}
     finally{setBusy(false);}
   }
   async function sendFile(){
@@ -88,6 +118,21 @@ export default function CloudRunnerPanel({projectId,workspaceName,activeFile,onN
         <button className="secondary-button" onClick={()=>void check()} disabled={busy}>{busy?<LoaderCircle size={14} className="spin"/>:<ShieldCheck size={14}/>} Comprobar acceso</button></div>
       <div className="cloud-status">{status==='online'?'Identidad autorizada y servicio disponible':status==='error'?'No se ha podido comprobar Access':'Autenticación pendiente'}</div>
       <div className="cloud-action-row"><span><FileCode2 size={15}/> {activeFile?.path||'Ningún archivo abierto'}</span><button className="secondary-button" onClick={()=>void sendFile()} disabled={busy||status!=='online'||!activeFile}>Enviar archivo <ArrowRight size={13}/></button></div>
+      <section className="cloud-whatsapp" aria-label="Avisos WhatsApp del proyecto">
+        <strong>Avisos WhatsApp al terminar tareas</strong>
+        <p>Requiere un servidor privado activo, la integración oficial de Meta y tu consentimiento. No envía código ni secretos del proyecto.</p>
+        <p>Estado: {notifyEnabled?'Activado':'Desactivado'} · {notifyConfigured?'Meta configurado':'Meta no configurado'} {notifyRecipient?'· '+notifyRecipient:''}</p>
+        {!notifyEnabled && <>
+          <label>Teléfono internacional (E.164)</label>
+          <input className="dialog-text-input" type="tel" inputMode="tel" autoComplete="tel" value={notifyPhone} onChange={e=>setNotifyPhone(e.target.value)} placeholder="+593..." maxLength={16}/>
+          <label><input type="checkbox" checked={notifyConsent} onChange={e=>setNotifyConsent(e.target.checked)}/> Acepto recibir notificaciones de finalización por WhatsApp en este número.</label>
+        </>}
+        <div className="cloud-action-row">
+          {!notifyEnabled
+            ? <button className="secondary-button" type="button" disabled={busy||!notifyConfigured||!notifyConsent||!/^\+[1-9]\d{7,14}$/.test(notifyPhone.trim())} onClick={()=>void saveNotification(true)}>Activar avisos</button>
+            : <button className="secondary-button" type="button" disabled={busy} onClick={()=>void saveNotification(false)}>Desactivar avisos</button>}
+        </div>
+      </section>
       <label className="cloud-action-label">Comando permitido (requiere confirmación)</label>
       <div className="cloud-action-row"><select value={command} onChange={e=>setCommand(e.target.value)} disabled={busy}>{ACTIONS.map((a,i)=><option value={String(i)} key={a.name}>{a.name}: {[a.bin,...a.args].join(' ')}</option>)}</select><button className="primary-button" onClick={()=>void run()} disabled={busy||status!=='online'}><Play size={14}/> Ejecutar con aprobación</button></div>
     </>}

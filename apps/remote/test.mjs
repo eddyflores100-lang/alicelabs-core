@@ -53,3 +53,13 @@ test('Only approved Meta template endpoint is called; no exposed key or body tex
     assert.equal(calls,1);
   }finally{globalThis.fetch=realFetch;}
 });
+
+import {validEncryptedVault} from './src/vault.mjs';
+test('Remote owner vault accepts only encrypted envelopes and rejects plaintext credentials',()=>{
+  const e={version:1,kdf:'PBKDF2-SHA256',iterations:310000,salt:'A'.repeat(24),iv:'A'.repeat(16),ciphertext:'A'.repeat(40)};
+  assert.equal(validEncryptedVault(e),true);
+  assert.equal(validEncryptedVault({connections:[{apiKey:'secret'}]}),false);
+  assert.equal(validEncryptedVault({...e,iterations:100}),false);
+  assert.equal(validEncryptedVault({...e,ciphertext:'{apiKey:secret}'}),false);
+  assert.equal(validEncryptedVault({...e,ciphertext:'A'.repeat(1200000)}),false);
+});

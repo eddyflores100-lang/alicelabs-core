@@ -4,7 +4,7 @@ const STORAGE_KEY = 'alicelabs-core:owner-api-vault:v1';
 const ITERATIONS = 310_000;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
-const allowedProviders: Provider[] = ['openai', 'openrouter', 'anthropic', 'google', 'deepseek'];
+const allowedProviders: Provider[] = ['openai', 'openrouter', 'anthropic', 'google', 'deepseek', 'groq', 'mistral', 'xai'];
 
 type VaultEnvelope = {
   version: 1;
@@ -88,4 +88,29 @@ export async function unsealConnections(password: string): Promise<Connection[]>
 
 export function eraseStoredVault(): void {
   window.localStorage.removeItem(STORAGE_KEY);
+}
+
+/** Export only encrypted envelope bytes for owner-authenticated remote sync. */
+export function exportEncryptedVault(): string {
+  const value=window.localStorage.getItem(STORAGE_KEY);
+  if(!value)throw new Error('Primero guarda una bóveda cifrada en este navegador.');
+  validateEncryptedEnvelope(value);
+  return value;
+}
+export function importEncryptedVault(value: string): void {
+  validateEncryptedEnvelope(value);
+  window.localStorage.setItem(STORAGE_KEY,value);
+}
+function validateEncryptedEnvelope(value: string): void {
+  if(value.length>1100000)throw new Error('Bóveda cifrada demasiado grande.');
+  let e: unknown;
+  try { e=JSON.parse(value); } catch {throw new Error('Formato de bóveda cifrada no válido.');}
+  if(!e||typeof e!=='object'||Array.isArray(e))throw new Error('Bóveda no válida.');
+  const p=e as Record<string,unknown>;
+  if(p.version!==1||p.kdf!=='PBKDF2-SHA256'||!Number.isInteger(p.iterations)||
+     (p.iterations as number)<310000||(p.iterations as number)>1000000||
+     typeof p.salt!=='string'||typeof p.iv!=='string'||typeof p.ciphertext!=='string'||
+     !/^[A-Za-z0-9+/=]+$/.test(p.salt)|| !/^[A-Za-z0-9+/=]+$/.test(p.iv)||
+     !/^[A-Za-z0-9+/=]+$/.test(p.ciphertext)||p.ciphertext.length<20)
+    throw new Error('Bóveda cifrada no válida.');
 }

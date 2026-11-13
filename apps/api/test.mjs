@@ -170,3 +170,39 @@ test('DeepSeek chat calls official endpoint without any session or proxy rotatio
   });
   assert.equal(calls, 1);
 });
+
+test('Additional official providers discover models using their own API credentials', async () => {
+  const providers = {groq:'https://api.groq.com/openai/v1/models',mistral:'https://api.mistral.ai/v1/models',xai:'https://api.x.ai/v1/models'};
+  for (const [provider,endpoint] of Object.entries(providers)) {
+    let count=0;
+    await withFakeFetch(async (url, init) => {
+      count++;assert.equal(url,endpoint);assert.equal(init.headers.Authorization,'Bearer '+key);
+      return Response.json({data:[{id:'live-model-test',name:'Test Model',context_window:32000},{id:'embedding-special'}]});
+    }, async () => {
+      const r=await worker.fetch(request('/api/models',{method:'POST',body:{provider,apiKey:key}}));
+      assert.equal(r.status,200,provider);
+      const j=await r.json();assert.equal(j.models.length,1);assert.equal(j.models[0].id,'live-model-test');
+      assert.doesNotMatch(JSON.stringify(j),/sk-secret/);
+    });
+    assert.equal(count,1,provider);
+  }
+});
+
+test('Additional official chat endpoints use compatible text completion without credential leaks', async () => {
+  const providers = {groq:'https://api.groq.com/openai/v1/chat/completions',mistral:'https://api.mistral.ai/v1/chat/completions',xai:'https://api.x.ai/v1/chat/completions'};
+  for (const [provider,endpoint] of Object.entries(providers)) {
+    let count=0;
+    await withFakeFetch(async (url,init) => {
+      count++;assert.equal(url,endpoint);assert.equal(init.headers.Authorization,'Bearer '+key);
+      const b=JSON.parse(init.body);assert.equal(b.model,'live-model-test');
+      assert.equal(b.messages[0].role,'system');assert.equal(b.messages.at(-1).role,'user');
+      return Response.json({choices:[{message:{content:'Correct '+provider}}]});
+    }, async () => {
+      const r=await worker.fetch(request('/api/agent',{method:'POST',body:{provider,apiKey:key,model:'live-model-test',question:'Revisa mi proyecto'}}));
+      assert.equal(r.status,200,provider);
+      const j=await r.json();assert.equal(j.answer,'Correct '+provider);
+      assert.doesNotMatch(JSON.stringify(j),/sk-secret/);
+    });
+    assert.equal(count,1,provider);
+  }
+});

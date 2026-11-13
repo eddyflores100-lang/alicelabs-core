@@ -12,7 +12,7 @@ type CatalogResult = {
   fetchedAt: number; stale: boolean;
   models: CatalogModel[]; providers: Array<{ id: string; name: string; count: number }>;
 };
-const supported = new Set(['openai', 'google', 'anthropic', 'openrouter', 'deepseek']);
+const supported = new Set(['openai', 'google', 'anthropic', 'openrouter', 'deepseek', 'groq', 'mistral', 'xai']);
 const formatNumber = (n: number) => new Intl.NumberFormat('es-EC').format(n);
 const toPrice = (n: number | null) => n == null ? 'Sin dato' : '$' + Number(n.toFixed(3)).toLocaleString('en-US',{maximumFractionDigits:3});
 export default function ModelFinder({ onConnect }: { onConnect: (p: Provider) => void }) {

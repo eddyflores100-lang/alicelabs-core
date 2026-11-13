@@ -28,6 +28,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build the PWA
         run: pnpm web:build
+      - name: Test encrypted owner vault (WebCrypto)
+        run: node --experimental-strip-types --test apps/web/test-vault.mjs
       - name: Test model routing
         run: pnpm test:web
       - name: Test Worker and public model catalog

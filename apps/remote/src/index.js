@@ -1,6 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { validProject, safePath, safeCommand, safeText } from './policy.mjs';
 import { validOptIn, whatsappReady, notifyWhatsApp } from './whatsapp.mjs';
+import {validEncryptedVault} from './vault.mjs';
 
 const ORIGINS = new Set(['https://alicelabs-core.pages.dev', 'http://localhost', 'https://localhost', 'capacitor://localhost']);
 function allowedOrigin(value) {
@@ -27,7 +28,7 @@ export default {
       if(!allow)return responseJson({error:'Origin no autorizado'},403);
       return new Response(null,{status:204,headers:{
         'Access-Control-Allow-Origin':allow,'Access-Control-Allow-Credentials':'true',
-        'Access-Control-Allow-Methods':'GET, PUT, POST, OPTIONS',
+        'Access-Control-Allow-Methods':'GET, PUT, POST, DELETE, OPTIONS',
         'Access-Control-Allow-Headers':'Content-Type',
         'Access-Control-Max-Age':'120','Vary':'Origin'
       }});
@@ -38,6 +39,25 @@ export default {
     const owner=String(identity?.email||'').toLowerCase().trim();
     if(!owner||owner.length>254)return responseJson({error:'Identidad no verificada'},403,allow);
     const url=new URL(request.url);
+    if(url.pathname==='/v1/owner/vault'){
+      if(!['GET','PUT','DELETE'].includes(request.method))return responseJson({error:'Método no permitido'},405,allow);
+      if(request.method!=='GET' && !allow)return responseJson({error:'Origen autorizado requerido'},403);
+      let body='';
+      if(request.method==='PUT'){
+        body=await request.text();
+        if(body.length>1100000)return responseJson({error:'Bóveda cifrada demasiado grande'},413,allow);
+        let envelope;try{envelope=JSON.parse(body);}catch{return responseJson({error:'JSON inválido'},400,allow);}
+        if(!validEncryptedVault(envelope))return responseJson({error:'Solo se acepta una bóveda cifrada válida'},400,allow);
+      }
+      const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode('owner-vault:v1:'+owner));
+      const name=Array.from(new Uint8Array(digest)).map(x=>x.toString(16).padStart(2,'0')).join('');
+      const internal=new Request('https://internal.local/vault',{method:request.method,...(body?{body}:{}),
+        ...(body?{headers:{'Content-Type':'application/json'}}:{})});
+      const result=await env.SANDBOX.getByName(name).fetch(internal);
+      const headers=new Headers(result.headers);headers.set('Cache-Control','no-store');
+      if(allow){headers.set('Access-Control-Allow-Origin',allow);headers.set('Access-Control-Allow-Credentials','true');}
+      return new Response(result.body,{status:result.status,headers});
+    }
     const match=url.pathname.match(/^\/v1\/projects\/([a-f0-9-]{36})\/(status|run|notify|files(?:\/.*)?)$/i);
     if(!match||!validProject(match[1]))return responseJson({error:'Proyecto inválido'},404,allow);
     const action=match[2];
@@ -91,6 +111,23 @@ export class ProjectSandbox extends DurableObject {
   async fetch(request) {
     const url=new URL(request.url);
     const path=url.pathname;
+    if(path==='/vault'){
+      if(request.method==='GET'){
+        const envelope=await this.ctx.storage.get('owner:encrypted-vault');
+        return envelope?responseJson({ok:true,envelope}):responseJson({error:'No existe una bóveda sincronizada'},404);
+      }
+      if(request.method==='PUT'){
+        const envelope=await request.json();
+        if(!validEncryptedVault(envelope))return responseJson({error:'Bóveda cifrada inválida'},400);
+        await this.ctx.storage.put('owner:encrypted-vault',envelope);
+        return responseJson({ok:true,updatedAt:Date.now()});
+      }
+      if(request.method==='DELETE'){
+        await this.ctx.storage.delete('owner:encrypted-vault');
+        return responseJson({ok:true,deleted:true});
+      }
+      return responseJson({error:'Método no permitido'},405);
+    }
     if(path==='/status'){
       const map=await this.ctx.storage.list({prefix:'file:'});
       return responseJson({ok:true,files:map.size,running:!!this.ctx.container?.running,isolated:true});
