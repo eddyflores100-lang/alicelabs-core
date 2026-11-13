@@ -23,6 +23,7 @@ import {runAgentEditTeam} from './agentTeam';
 import {grantedProfiles} from './ownerGrants';
 import {githubFileCommit,githubFileCreate,githubProposePullRequest} from './githubWorkspace';
 import GithubActionsPanel from './GithubActionsPanel';
+import GithubPullRequestsPanel from './GithubPullRequestsPanel';
 import type { Priority } from './routing';
 import ChatGPTPanel from './ChatGPTPanel';
 import AIConnectionsHub from './AIConnectionsHub';
@@ -40,7 +41,7 @@ import type { ChatGPTAccount, ChatGPTModel } from './chatgpt';
 // Load Monaco from same-origin static assets; no CDN and no 7 MB bundler worker.
 loader.config({ paths: { vs: '/vs' } });
 type Section = 'files' | 'search' | 'changes' | 'activity';
-type Dialog = 'github' | 'github-actions' | 'new' | 'settings' | 'chatgpt' | 'providers' | 'commands' | 'bridge' | 'cloud' | 'diff' | null;
+type Dialog = 'github' | 'github-actions' | 'github-pulls' | 'new' | 'settings' | 'chatgpt' | 'providers' | 'commands' | 'bridge' | 'cloud' | 'diff' | null;
 type LogEntry = { id: number; time: string; level: 'info' | 'success' | 'error'; text: string };
 type TerminalResult = { id: number; command: string; output: string; exitCode: number | null };
 const LOCAL_BRIDGE = 'http://127.0.0.1:39007';
@@ -901,6 +902,7 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
     { title: 'Abrir carpeta local', detail: 'Permitir acceso a archivos locales', icon: HardDrive, action: () => { setDialog(null); void openLocal(); } },
     { title: 'Abrir repositorio GitHub', detail: 'Explorar código público', icon: Github, action: () => setDialog('github') },
     { title: 'GitHub Actions', detail: 'Ejecutar y revisar workflows del repositorio conectado', icon: Play, action:()=>setDialog('github-actions') },
+    { title: 'Pull Requests GitHub', detail: 'Revisar diffs y fusionar PRs de forma segura', icon: GitBranch, action:()=>setDialog('github-pulls') },
     { title: 'Guardar archivo', detail: 'Ctrl+S', icon: Save, action: () => { setDialog(null); if (activePath) void saveDoc(activePath); } },
     { title: 'Nuevo archivo', detail: 'Crear en el proyecto local', icon: FilePlus2, action: () => setDialog('new') },
     { title: 'Administrar cuentas y proveedores IA', detail: 'ChatGPT, Gemini, Claude, DeepSeek, OpenRouter', icon: Bot, action: () => setDialog('providers') },
@@ -965,6 +967,7 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
               {githubToken&&<input className="dialog-text-input" value={githubCommitMessage} onChange={e=>setGithubCommitMessage(e.target.value)} maxLength={180} placeholder="Mensaje del commit (opcional)"/>}
               {githubPullRequestUrl&&<a className="github-pr-link" href={githubPullRequestUrl} target="_blank" rel="noopener noreferrer">Abrir Pull Request publicado</a>}
               {githubToken&&<button className="thin-action" onClick={()=>setDialog('github-actions')}><Play size={13}/> GitHub Actions · ejecución en la nube</button>}
+              {githubToken&&<button className="thin-action" onClick={()=>setDialog('github-pulls')}><GitBranch size={13}/> Revisar y fusionar Pull Requests</button>}
             </div>}
             <FileTree nodes={workspace.nodes} expanded={expanded} onToggle={toggleFolder} onOpen={openNode} current={activePath}/>
             {workspace.nodes.length === 0 && <div className="empty-sidebar">Esta carpeta no contiene archivos visibles.</div>}
@@ -1066,9 +1069,9 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
       <button onClick={() => {setSidebarOpen(false);setAgentOpen(false);setBottomOpen(true);setBottomTab('terminal');}}><SquareTerminal size={19}/><span>Consola</span></button>
     </nav>}
     {toast && <div className="toast" role="status"><CircleDot size={15}/>{toast}<button onClick={()=>setToast('')}><X size={14}/></button></div>}
-    {dialog && <div className="modal-backdrop" onMouseDown={e => {if(e.target===e.currentTarget)setDialog(null);}}><div className={'dialog '+(dialog==='commands'?'command-dialog':dialog==='diff'?'diff-dialog':dialog==='settings'?'settings-dialog':dialog==='chatgpt'?'chatgpt-dialog':dialog==='providers'?'ai-hub-dialog':dialog==='cloud'?'cloud-dialog':dialog==='github-actions'?'settings-dialog':'')} role="dialog" aria-modal="true">
+    {dialog && <div className="modal-backdrop" onMouseDown={e => {if(e.target===e.currentTarget)setDialog(null);}}><div className={'dialog '+(dialog==='commands'?'command-dialog':dialog==='diff'?'diff-dialog':dialog==='settings'?'settings-dialog':dialog==='chatgpt'?'chatgpt-dialog':dialog==='providers'?'ai-hub-dialog':dialog==='cloud'?'cloud-dialog':dialog==='github-actions'?'settings-dialog':dialog==='github-pulls'?'settings-dialog':'')} role="dialog" aria-modal="true">
       {dialog==='diff' && proposal ? <><div className="dialog-top"><div><span className="dialog-eyebrow">REVISIÓN DE CAMBIOS</span><h3>{proposal.path}</h3></div><button className="dialog-close" onClick={()=>setDialog(null)}><X size={18}/></button></div><div className="diff-body"><DiffEditor original={proposal.original} modified={proposal.next} language={languageOf(proposal.path)} theme="vs-dark" options={{ readOnly: true, automaticLayout:true, minimap:{enabled:false}, fontSize:12, renderSideBySide: true, scrollBeyondLastLine:false }} /></div><div className="dialog-actions diff-actions"><button className="secondary-button" onClick={()=>setDialog(null)}>Volver</button><button className="primary-button" disabled={proposal.teamApproved===false} onClick={()=>{if(proposal.teamApproved!==false){applyProposal();setDialog(null);}}}><Check size={14}/> Aplicar al editor</button></div></> : dialog==='commands' ? <><div className="command-input"><Search size={19}/><input autoFocus placeholder="Escribe una acción o un archivo..." value={commandFilter} onChange={e=>setCommandFilter(e.target.value)}/><kbd>ESC</kbd></div><div className="command-list">{visibleCommands.map((item,i)=><button key={i} onClick={item.action}><item.icon size={17}/><div><strong>{item.title}</strong><small>{item.detail}</small></div><ArrowRight size={14}/></button>)}</div><div className="command-footer"><Keyboard size={13}/> Acciones y archivos del proyecto</div></>
-      : <><div className="dialog-top"><div><span className="dialog-eyebrow">ALICELABS CORE</span><h3>{dialog==='github'?'Abrir repositorio GitHub':dialog==='github-actions'?'GitHub Actions del proyecto':dialog==='new'?'Nuevo archivo':dialog==='settings'?'Cuentas API y modelos':dialog==='chatgpt'?'Conectar cuentas ChatGPT':dialog==='providers'?'Proveedores y cuentas de IA':dialog==='cloud'?'Nube privada del proyecto':'Conectar terminal local'}</h3></div><button className="dialog-close" onClick={()=>setDialog(null)}><X size={18}/></button></div>
+      : <><div className="dialog-top"><div><span className="dialog-eyebrow">ALICELABS CORE</span><h3>{dialog==='github'?'Abrir repositorio GitHub':dialog==='github-actions'?'GitHub Actions del proyecto':dialog==='github-pulls'?'Pull Requests del proyecto':dialog==='new'?'Nuevo archivo':dialog==='settings'?'Cuentas API y modelos':dialog==='chatgpt'?'Conectar cuentas ChatGPT':dialog==='providers'?'Proveedores y cuentas de IA':dialog==='cloud'?'Nube privada del proyecto':'Conectar terminal local'}</h3></div><button className="dialog-close" onClick={()=>setDialog(null)}><X size={18}/></button></div>
         {dialog==='github' && <form onSubmit={openGithub} className="dialog-content">
           <p>Abre repositorios públicos en lectura o conecta tu cuenta GitHub con un token restringido. No se guarda ningún token en disco, IndexedDB ni en el repositorio.</p>
           <label>URL del repositorio</label>
@@ -1161,6 +1164,13 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
           onRefresh={refreshChatGPT} onDisconnect={disconnectChatGPT}
           onClose={() => setDialog(null)}
         />}
+        {dialog==='github-pulls'&&workspace?.github&&githubToken&&activeProject&&<GithubPullRequestsPanel
+          repo={{...workspace.github,private:workspace.github.private===true}} token={githubToken}
+          onNotice={notify} onMerged={()=>void refreshFiles()}/>}
+        {dialog==='github-pulls'&&(!workspace?.github||!githubToken)&&<div className="dialog-content">
+          <p>Conecta primero una cuenta GitHub autorizada para este repositorio.</p>
+          <button className="secondary-button" type="button" onClick={()=>setDialog('github')}>Conectar GitHub</button>
+        </div>}
         {dialog==='github-actions'&&workspace?.github&&githubToken&&activeProject&&<GithubActionsPanel
           repo={{...workspace.github,private:workspace.github.private===true}} token={githubToken} onNotice={notify}/>}
         {dialog==='github-actions'&&(!workspace?.github||!githubToken)&&<div className="dialog-content">

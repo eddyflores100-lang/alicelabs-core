@@ -389,3 +389,21 @@
 .github-action-run a{display:flex;color:var(--accent,#94bfff)}
 .github-action-run button{padding:5px 8px}
 .github-actions-note{display:flex;align-items:flex-start;gap:7px;font-size:11px}
+
+/* Per-project GitHub Pull Request code review */
+.github-pr-panel{max-height:min(70vh,800px);overflow-y:auto;display:grid;gap:11px}
+.github-pr-panel>p{line-height:1.5;margin:2px 0}
+.github-pr-list{display:grid;gap:7px;max-height:260px;overflow:auto}
+.github-pr-item{padding:10px;border:1px solid var(--border,#3d4450);border-radius:8px;background:transparent;color:inherit;display:flex;align-items:center;gap:10px;text-align:left;cursor:pointer}
+.github-pr-item.selected{border-color:var(--accent,#839dbf)}
+.github-pr-item>span{flex:1;min-width:0;display:grid;gap:4px}
+.github-pr-item strong{font-size:12px;overflow-wrap:anywhere}
+.github-pr-item small{font-size:11px;color:var(--text-secondary,#a3afbd);overflow-wrap:anywhere}
+.github-pr-inspection{display:grid;gap:11px;padding:12px;border:1px solid var(--border,#3d4450);border-radius:9px}
+.github-pr-inspection>p{font-size:12px;margin:3px 0;display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.github-pr-inspection>a{font-size:12px;display:inline-flex;gap:7px;align-items:center;color:var(--accent,#8ab9ff);text-decoration:underline}
+.github-pr-file{display:grid;gap:5px}
+.github-pr-file button{display:flex;justify-content:space-between;text-align:left;gap:9px}
+.github-pr-file button span{overflow-wrap:anywhere}
+.github-pr-file pre{font-size:11px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto;max-height:270px;padding:9px;border:1px solid var(--border,#3d4450);border-radius:7px}
+.github-pr-review-confirm{display:flex;gap:8px;align-items:flex-start;font-size:12px}
