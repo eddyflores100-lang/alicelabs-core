@@ -32,6 +32,21 @@ test('Only approved owner/collaborator Issues qualify for automatic AI work',()=
   ];
   for(const one of candidates)assert.equal(parseAutopilotIssue(one),null);
 });
+test('Owner-approved Core monorepo files reach the autopilot queue',()=>{
+  const approved=issue(44,{goal:'Refactor Core web and API modules',
+    files:'apps/web/src/App.tsx,apps/api/src/index.js'});
+  assert.deepEqual(parseAutopilotIssue(approved),{number:44,
+    goal:'Refactor Core web and API modules',files:'apps/web/src/App.tsx,apps/api/src/index.js'});
+  assert.equal(parseAutopilotIssue(issue(45,{goal:'Edit CI scripts',
+    files:'.github/workflows/core-ci.yml,apps/web/src/App.tsx'})),null);
+});
+test('Large Core files may be approved with bounded line selectors',()=>{
+  const requested=issue(62,{goal:'Fix small part of large Core App',
+    files:'apps/web/src/App.tsx#L120-L180,apps/web/src/agent.ts'});
+  assert.equal(parseAutopilotIssue(requested)?.number,62);
+  assert.equal(parseAutopilotIssue(issue(63,{goal:'Unsafe line selection',
+    files:'apps/web/src/App.tsx#L1-L500,apps/web/src/agent.ts'})),null);
+});
 test('Autopilot caps daily paid tasks and processes oldest approved one first',()=>{
   const tasks=[task(8),task(2),task(7)];
   assert.equal(chooseAutopilotIssue(tasks,0,2).number,2);

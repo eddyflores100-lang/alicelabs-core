@@ -10,7 +10,7 @@ La programación queda desactivada por defecto. El workflow necesita dos variabl
 
 1. Comprueba las dos variables y la presencia de API key del proveedor.
 2. Cuenta los Issues reservados y actualizados desde las 00:00 UTC. Admite de una a tres tareas nuevas al día, con valor predeterminado de dos. Cuando el límite se alcanza no llama a la IA.
-3. Inspecciona Issues abiertos con etiqueta exacta core-agent:approved. Solo permite tareas de OWNER, MEMBER o COLLABORATOR del repositorio. El cuerpo debe contener JSON con goal (5–1600 caracteres) y files (2–6 rutas existentes bajo src/, separadas por comas).
+3. Inspecciona Issues abiertos con etiqueta exacta core-agent:approved. Solo permite tareas de OWNER, MEMBER o COLLABORATOR del repositorio. El cuerpo debe contener JSON con goal (5–1600 caracteres) y files (2–6 rutas existentes bajo src/ o apps/{web,api,remote}/src/, separadas por comas).
 4. Reserva una tarea válida con core-agent:claimed. La concurrencia de GitHub Actions impide dos ejecutores simultáneos en el repositorio.
 5. Ejecuta Core Cloud Coder con los roles planificador, programador y revisor, máximo cinco solicitudes al proveedor y límites de archivos. Solo crea un PR si el revisor aprueba.
 6. Marca el Issue con core-agent:review cuando crea el PR o con core-agent:failed al fallar. No reintenta automáticamente tareas fallidas. La fusión es siempre humana.
@@ -19,7 +19,7 @@ La programación queda desactivada por defecto. El workflow necesita dos variabl
 
 1. En la ventana de proyecto abre el repositorio GitHub con credencial autorizada del propietario. Para controlarlo desde Core necesitas permisos mínimos del repositorio para Contents, Pull requests, Issues, Actions y Variables.
 2. Abre GitHub Actions y selecciona Core Autopilot.
-3. Indica un objetivo y dos a seis archivos existentes bajo src/. Crea una tarea aprobada para guardar la autorización como Issue.
+3. Indica un objetivo y dos a seis archivos existentes bajo src/ o apps/web/src/, apps/api/src/, apps/remote/src/. Crea una tarea aprobada para guardar la autorización como Issue.
 4. Elige límite de una, dos o tres tareas diarias y pulsa Activar con límite diario tras comprobar gastos potenciales. Core escribe las variables oficiales de GitHub.
 5. Para detener tareas futuras pulsa Desactivar autopiloto. Se desactiva primero la programación pagada y luego el programador. Los trabajos ya iniciados pueden continuar; se cancelan desde GitHub Actions.
 
@@ -33,7 +33,7 @@ GitHub Actions y proveedores pueden cobrar por los minutos y tokens usados. El l
 
     {
       "goal": "Corrige el tipado y actualiza las pruebas del componente",
-      "files": "src/components/Card.tsx,src/components/Card.test.ts"
+      "files": "apps/web/src/App.tsx#L100-L180,apps/web/src/agent.ts"
     }
 
 La etiqueta core-agent:approved es un permiso explícito del propietario, no autorización para comandos arbitrarios. Core rechaza Issues de autores ajenos, pull requests, rutas externas y archivos binarios.
@@ -52,3 +52,8 @@ La etiqueta core-agent:approved es un permiso explícito del propietario, no aut
 tools/core-autopilot-queue.test.mjs cubre autorizaciones, validación JSON, presupuesto, reservas, cierre y bloqueo de reintentos.
 apps/web/test-github-autopilot.mjs cubre creación de Issues desde la web y controles de variables para activar/desactivar.
 Core CI ejecuta estas pruebas junto con el resto de pruebas existentes.
+
+
+## Archivo grande: edición por líneas
+
+Los archivos de más de 12 KB (por ejemplo apps/web/src/App.tsx) deben seleccionar un rango como apps/web/src/App.tsx#L100-L180. La selección incluye hasta 200 líneas y como máximo 12 KB. Solo el fragmento se envía al modelo. El agente conserva intacto el resto, comprueba el contenido original antes de escribir y bloquea modificaciones concurrentes. Los otros archivos del lote pueden indicar rutas normales. No se permite alterar rutas externas ni archivos de configuración de GitHub Actions.

@@ -19,40 +19,68 @@ const PROVIDERS=['openai','anthropic','openrouter','google','deepseek','groq','m
 function ensure(condition,message){
   if(!condition)throw new Error(message);
 }
+// Large existing files are editable through explicit 1-based inclusive line windows.
+// A scoped excerpt is the only content sent to the model; the rest stays local.
+function parseSelector(value){
+  const match=value.match(/^(.*?)(?:#L([1-9]\d*)-L([1-9]\d*))?$/);
+  ensure(Boolean(match),'Selector de líneas inválido.');
+  const file=match[1],start=match[2]?Number(match[2]):null,end=match[3]?Number(match[3]):null;
+  ensure(/^(?:src\/|apps\/(?:web|api|remote)\/src\/)/.test(file)&&
+    !file.startsWith('/')&&!file.includes('\\')&&!/[\x00-\x1f\x7f]/.test(file)&&
+    file.length<=220&&file.split('/').every(part=>part&&part!=='.'&&part!=='..'),
+    'Solo se admiten archivos existentes de rutas fuente autorizadas.');
+  ensure(/\.(?:ts|tsx|js|jsx|css|md|json|py|go|rs|html)$/i.test(file),
+    'Extensión de archivo no autorizada.');
+  if(start!==null){
+    ensure(Number.isSafeInteger(start)&&Number.isSafeInteger(end)&&start<=end&&
+      end-start<200,'El rango debe tener como máximo 200 líneas.');
+  }
+  return {file,start,end};
+}
 export function parseScopedPaths(raw){
-  ensure(typeof raw==='string'&&raw.length<=700,'Selecciona rutas cortas de archivos dentro de src/.');
+  ensure(typeof raw==='string'&&raw.length<=900,'Selecciona rutas fuente acotadas.');
   const paths=raw.split(/[,\n]/).map(x=>x.trim()).filter(Boolean);
   ensure(paths.length>=2&&paths.length<=MAX_FILES,'Selecciona entre 2 y 6 rutas de archivos existentes.');
   const seen=new Set();
-  for(const p of paths){
-    ensure(p.startsWith('src/')&&!p.startsWith('/')&&!p.includes('\\')&&
-      !/[\x00-\x1f\x7f]/.test(p)&&p.length<=220&&
-      p.split('/').every(segment=>segment&&segment!=='.'&&segment!=='..'),
-      'Por seguridad solo se admiten rutas existentes de src/.');
-    ensure(/\.(?:ts|tsx|js|jsx|css|md|json|py|go|rs|html)$/i.test(p),
-      'Archivo no admitido para agente en la nube.');
-    ensure(!seen.has(p),'Archivos duplicados en la selección.');
-    seen.add(p);
+  for(const selector of paths){
+    const {file}=parseSelector(selector);
+    ensure(!seen.has(file),'No se permite seleccionar el mismo archivo dos veces.');
+    seen.add(file);
   }
   return paths;
 }
 export async function readScopedFiles(root,paths){
   const rootAbs=await realpath(root);
   const files=[];
-  let size=0;
-  for(const p of paths){
-    const absolute=path.resolve(rootAbs,p);
+  let total=0;
+  for(const selector of paths){
+    const {file,start,end}=parseSelector(selector);
+    const absolute=path.resolve(rootAbs,file);
     ensure(absolute.startsWith(rootAbs+path.sep),'Ruta fuera del repositorio.');
     const stat=await lstat(absolute);
     ensure(stat.isFile()&&!stat.isSymbolicLink(),'No se admiten directorios ni enlaces simbólicos.');
     const canonical=await realpath(absolute);
     ensure(canonical.startsWith(rootAbs+path.sep),'Archivo resuelto fuera del repositorio.');
-    ensure(stat.size<=MAX_SOURCE_BYTES,'Archivo demasiado grande: '+p);
-    const text=await readFile(absolute,'utf8');
-    ensure(!text.includes('\0'),'No se admiten archivos binarios.');
-    size+=new TextEncoder().encode(text).byteLength;
-    ensure(size<=MAX_ALL_BYTES,'El lote supera 21 KB de contenido original.');
-    files.push({path:p,text});
+    ensure(stat.size<=(start!==null?900000:MAX_SOURCE_BYTES),
+      'Archivo demasiado grande; usa un selector #Linicio-Lfin: '+file);
+    const originalBytes=await readFile(absolute);
+    const originalWhole=originalBytes.toString('utf8');
+    ensure(Buffer.from(originalWhole,'utf8').equals(originalBytes),
+      'El archivo tiene bytes no válidos UTF-8; se rechaza para no corromperlo.');
+    ensure(!originalWhole.includes('\0'),'No se admiten archivos binarios.');
+    let text=originalWhole,slice=null;
+    if(start!==null){
+      const eol=originalWhole.includes('\r\n')?'\r\n':'\n';
+      const lines=originalWhole.split(/\r?\n/);
+      ensure(end<=lines.length,'El rango excede el número de líneas del archivo.');
+      text=lines.slice(start-1,end).join(eol);
+      slice={start,end,eol};
+    }
+    const bytes=new TextEncoder().encode(text).byteLength;
+    ensure(bytes<=MAX_SOURCE_BYTES,'El segmento supera 12 KB; selecciona menos líneas.');
+    total+=bytes;
+    ensure(total<=MAX_ALL_BYTES,'El lote supera 21 KB de contexto del modelo.');
+    files.push({path:file,text,originalWhole,slice});
   }
   return files;
 }
@@ -144,7 +172,7 @@ export async function runCloudCoder({
   const initialStatus=gitCommand(root,['status','--porcelain','--untracked-files=no']);
   ensure(!initialStatus,'El workspace ya tiene cambios. Se cancela antes de consumir tokens.');
   const changes=await runBatchCodingTeam({
-    goal,files,
+    goal,files:files.map(({path,text})=>({path,text})),
     call:(role,message,codeContext)=>callModel({
       provider,model,apiKey,role,message,codeContext
     },fetcher)
@@ -154,11 +182,29 @@ export async function runCloudCoder({
   const status=gitCommand(root,['status','--porcelain','--untracked-files=no']);
   ensure(!status,'El workspace tiene cambios pendientes; se cancela para evitar sobrescribirlos.');
   const branch='core/cloud-'+Date.now().toString(36)+'-'+randomUUID().slice(0,8);
-  gitCommand(root,['switch','-c',branch]);
-  for(const change of changes.changes){
-    await writeFile(path.resolve(root,change.path),change.next,'utf8');
+  // Verify all original sources again. Never overwrite concurrent changes.
+  const sourceByPath=new Map(files.map(f=>[f.path,f]));
+  for(const source of files){
+    const current=await readFile(path.resolve(root,source.path));
+    ensure(current.equals(Buffer.from(source.originalWhole,'utf8')),
+      'El archivo cambió durante la revisión: '+source.path);
   }
-  gitCommand(root,['add','--',...changes.changes.map(x=>x.path)]);
+  const prepared=[];
+  for(const change of changes.changes){
+    const source=sourceByPath.get(change.path);
+    ensure(Boolean(source)&&!change.next.includes('\0'),'Cambio inválido.');
+    let next=change.next;
+    if(source.slice){
+      const {start,end,eol}=source.slice;
+      const lines=source.originalWhole.split(/\r?\n/);
+      const replacement=change.next.replace(/\r\n?/g,'\n').split('\n');
+      next=[...lines.slice(0,start-1),...replacement,...lines.slice(end)].join(eol);
+    }
+    prepared.push({path:change.path,text:next});
+  }
+  gitCommand(root,['switch','-c',branch]);
+  for(const change of prepared)await writeFile(path.resolve(root,change.path),change.text,'utf8');
+  gitCommand(root,['add','--',...prepared.map(x=>x.path)]);
   gitCommand(root,['-c','user.name=AliceLabs Core Agent',
     '-c','user.email=41898282+github-actions[bot]@users.noreply.github.com',
     'commit','-m','Core: reviewed cloud coding proposal']);
