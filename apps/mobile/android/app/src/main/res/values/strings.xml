@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">AliceLabs Core</string>
+    <string name="title_activity_main">AliceLabs Core</string>
+    <string name="package_name">site.alicelabs.core</string>
+    <string name="custom_url_scheme">site.alicelabs.core</string>
+</resources>

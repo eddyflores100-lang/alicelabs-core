@@ -1,0 +1,21 @@
+{
+  "name": "@core/mobile",
+  "version": "0.7.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sync": "cap sync android",
+    "open": "cap open android",
+    "android:build": "cd android && gradlew.bat assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/core": "8.6.2",
+    "@capacitor/android": "8.6.2",
+    "@capacitor/local-notifications": "8.3.1",
+    "@capacitor-community/speech-recognition": "7.0.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.6.2",
+    "typescript": "^5.7.0"
+  }
+}

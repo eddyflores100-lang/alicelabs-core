@@ -1,0 +1,34 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "alicelabs-core-private-runner",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-12",
+  "observability": {
+    "enabled": true
+  },
+  "containers": [
+    {
+      "class_name": "ProjectSandbox",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "base": {
+          "dockerfile": "./Dockerfile"
+        }
+      }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SANDBOX",
+        "class_name": "ProjectSandbox"
+      }
+    ]
+  },
+  "exports": {
+    "ProjectSandbox": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  }
+}

@@ -32,5 +32,7 @@ jobs:
         run: pnpm test:web
       - name: Test Worker and public model catalog
         run: pnpm test:worker
+      - name: Test remote runner policy without deployment
+        run: pnpm --filter @core/remote test && pnpm --filter @core/remote check
       - name: Test ChatGPT companion pairing (mock, no credentials)
         run: node --test tools/chatgpt-companion/test.mjs

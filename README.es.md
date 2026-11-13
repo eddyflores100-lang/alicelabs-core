@@ -48,6 +48,10 @@ La versión PWA puede consultar modelos, leer repositorios públicos, importar a
 | Terminal Bridge en tu PC | Opcional, emparejamiento y aprobación por comando |
 | Agente autónomo multipaso, Git write, sandbox remoto | Pendiente |
 | Instalador Tauri estable | Pendiente |
+| Ventanas y sesiones independientes por proyecto | Disponible en web; borradores guardados localmente |
+| Dictado y avisos de tarea | Disponible donde el dispositivo conceda permisos |
+| APK Android nativo (debug preview) | Compilación válida; descarga en GitHub Releases |
+| Contenedores privados / avisos WhatsApp | Código y pruebas disponibles; pendientes Access, plan y credenciales Meta |
 
 ## Desarrollar en tu equipo
 
@@ -83,3 +87,11 @@ Consulta la [arquitectura](docs/ARCHITECTURE.md), el [análisis de proyectos sim
 El proyecto es independiente, con licencia [MIT](LICENSE), y no pertenece a OpenAI, Google, Anthropic ni a los autores de las herramientas citadas.
 
 **¿Te sirve?** [Deja una estrella en GitHub](https://github.com/eddyflores100-lang/alicelabs-core/stargazers), reporta un error reproducible o contribuye una mejora comprobable.
+
+### Versión 0.7: varios proyectos, Android nativo y dictado
+
+Core permite abrir **varias ventanas de proyecto** (máximo 16 en cada navegador). Cada una mantiene sus propios archivos abiertos, conversación, instrucciones y borrador, y guarda una copia local en IndexedDB. Puedes abrir la ventana activa en otra pestaña del navegador sin mezclar los proyectos. Las credenciales de los proveedores **no** se guardan en esos borradores.
+
+Se añadió dictado en español y avisos de finalización con permisos explícitos. La versión Android hecha con Capacitor usa micrófono y avisos nativos; [consulta cómo compilarla e instalarla](apps/mobile/README.md). Los avisos requieren que la aplicación esté activa; no son notificaciones de trabajos remotos mientras esté cerrada.
+
+El botón **Nube** permite preparar un entorno remoto por proyecto, pero el servidor no está desplegado: requiere **Cloudflare Access y Containers de pago**. También hay un adaptador de plantillas WhatsApp Business en [apps/remote](apps/remote/README.md), sin activar hasta contar con permisos, número emisor, plantilla aprobada y destinatario que acepte recibir mensajes. No se utilizan sesiones de WhatsApp Web.

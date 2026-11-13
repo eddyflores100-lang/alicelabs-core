@@ -3,7 +3,7 @@ import type { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent } from '
 import Editor, { DiffEditor, loader } from '@monaco-editor/react';
 import type * as monaco from 'monaco-editor';
 import {
-  Activity, ArrowRight, Bot, Braces, Check, CheckCircle2, Download, Upload, Smartphone,
+  Activity, ArrowRight, Bell, BellOff, Bot, Braces, Check, CheckCircle2, Cloud, Download, Upload, Smartphone,
   ChevronDown, ChevronRight, CircleDot, Code2, Copy, File, FileCode2,
   FilePlus2, Folder, FolderOpen, FolderPlus, GitBranch, Github, HardDrive,
   Keyboard, Layers3, LoaderCircle, LockKeyhole, MessageSquareText,
@@ -23,13 +23,18 @@ import type { Priority } from './routing';
 import ChatGPTPanel from './ChatGPTPanel';
 import AIConnectionsHub from './AIConnectionsHub';
 import InstallApp from './InstallApp';
+import VoiceInput from './VoiceInput';
+import CloudRunnerPanel from './CloudRunnerPanel';
+import { requestTaskNotificationPermission, taskFinishedNotification } from './taskNotifications';
+import { getProjectSnapshot, saveProjectSnapshot } from './projectSnapshots';
+import type { ProjectSnapshot } from './projectSnapshots';
 import { companionHealth, getChatGPTAccounts, getChatGPTModels, startChatGPTLogin, disconnectChatGPTAccount, runChatGPT } from './chatgpt';
 import type { ChatGPTAccount, ChatGPTModel } from './chatgpt';
 
 // Load Monaco from same-origin static assets; no CDN and no 7 MB bundler worker.
 loader.config({ paths: { vs: '/vs' } });
 type Section = 'files' | 'search' | 'changes' | 'activity';
-type Dialog = 'github' | 'new' | 'settings' | 'chatgpt' | 'providers' | 'commands' | 'bridge' | 'diff' | null;
+type Dialog = 'github' | 'new' | 'settings' | 'chatgpt' | 'providers' | 'commands' | 'bridge' | 'cloud' | 'diff' | null;
 type LogEntry = { id: number; time: string; level: 'info' | 'success' | 'error'; text: string };
 type TerminalResult = { id: number; command: string; output: string; exitCode: number | null };
 const LOCAL_BRIDGE = 'http://127.0.0.1:39007';
@@ -72,7 +77,15 @@ function BrandMark({ size = 'normal' }: { size?: 'normal' | 'large' }) {
     <div className="brand-cross cross-one" /><div className="brand-cross cross-two" /><div className="brand-pixel" />
   </div>;
 }
-export default function App() {
+type AppProps = {
+  projectId: string;
+  activeProject: boolean;
+  onProjectTitle: (name: string) => void;
+  onDirtyChange: (dirty: boolean) => void;
+};
+export default function App({ projectId, activeProject, onProjectTitle, onDirtyChange }: AppProps) {
+  const [hydrated, setHydrated] = useState(false);
+  const didWarnStorage = useRef(false);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [docs, setDocs] = useState<OpenDocument[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
@@ -118,6 +131,7 @@ export default function App() {
   const [question, setQuestion] = useState('');
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [agentBusy, setAgentBusy] = useState(false);
+  const [notifyOnFinish, setNotifyOnFinish] = useState(false);
   const [proposal, setProposal] = useState<{ path: string; next: string; original: string } | null>(null);
   const [agentWidth, setAgentWidth] = useState(380);
   const [bridgeToken, setBridgeToken] = useState('');
@@ -161,6 +175,59 @@ export default function App() {
   useEffect(() => {
     void pingWorker().then(setWorkerReady);
   }, []);
+  // Recover this particular project without restoring credentials or temporary pairing tokens.
+  useEffect(() => {
+    let cancelled = false;
+    void getProjectSnapshot(projectId).then(data => {
+      if (cancelled) return;
+      if (data) {
+        setWorkspace(data.workspace);
+        setDocs(data.docs || []);
+        setActivePath(data.activePath || null);
+        setQuestion(data.question || '');
+        setHistory(data.history || []);
+        setGuidance(data.guidance || null);
+        setExpanded(new Set(data.expanded || []));
+        importedContents.current = new Map((data.docs || []).map(doc => [doc.path, doc.text]));
+      }
+    }).catch(() => {
+      if (!cancelled) log('No se pudo recuperar el estado guardado de este proyecto', 'error');
+    }).finally(() => { if(!cancelled)setHydrated(true); });
+    return () => { cancelled = true; };
+  }, [projectId, log]);
+  useEffect(() => {
+    if (workspace?.name) onProjectTitle(workspace.name);
+  }, [workspace?.name, onProjectTitle]);
+  useEffect(() => {
+    onDirtyChange(dirty.length > 0);
+  }, [dirty.length, onDirtyChange]);
+  useEffect(() => {
+    if (!hydrated) return;
+    const timer = window.setTimeout(() => {
+      const snapshot: ProjectSnapshot = {
+        workspace, docs: docs.slice(0, 50), activePath, question,
+        history: history.slice(-100), guidance, expanded: [...expanded], savedAt: Date.now()
+      };
+      void saveProjectSnapshot(projectId, snapshot).catch(async () => {
+        // Older or restricted browsers may not structured-clone FileSystemHandles.
+        const simpleWorkspace = workspace ? {
+          ...workspace, root: undefined,
+          nodes: JSON.parse(JSON.stringify(workspace.nodes, (key, value) => key === 'handle' ? undefined : value))
+        } : null;
+        const simpleDocs = docs.map(({handle, ...doc}) => doc);
+        try {
+          await saveProjectSnapshot(projectId, { ...snapshot, workspace: simpleWorkspace,
+            docs: simpleDocs });
+        } catch {
+          if (!didWarnStorage.current) {
+            didWarnStorage.current = true;
+            log('No se pudieron conservar los borradores. Exporta los archivos antes de cerrar.', 'error');
+          }
+        }
+      });
+    }, 550);
+    return () => window.clearTimeout(timer);
+  }, [hydrated, projectId, workspace, docs, activePath, question, history, guidance, expanded, log]);
   useEffect(() => {
     const media = window.matchMedia('(max-width: 900px)');
     function update(ev: MediaQueryListEvent) {
@@ -329,12 +396,13 @@ export default function App() {
     editor.addCommand(editorAPI.KeyMod.CtrlCmd | editorAPI.KeyCode.KeyS, () => { document.dispatchEvent(new CustomEvent('core-save')); });
   }
   useEffect(() => {
-    const save = () => { if (activePath) void saveDoc(activePath); };
+    const save = () => { if (activeProject && activePath) void saveDoc(activePath); };
     document.addEventListener('core-save', save);
     return () => document.removeEventListener('core-save', save);
   });
   useEffect(() => {
     function shortcuts(e: KeyboardEvent) {
+      if (!activeProject) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault(); if (activePath) void saveDoc(activePath);
       }
@@ -490,6 +558,18 @@ export default function App() {
       setChatGPTFailure(error instanceof Error ? error.message : 'No se pudo desconectar la cuenta');
     } finally { setChatGPTBusy(null); }
   }
+  async function enableTaskAlerts() {
+    if (notifyOnFinish) {setNotifyOnFinish(false);notify('Avisos de tareas desactivados para este proyecto');return;}
+    try {
+      await requestTaskNotificationPermission();
+      setNotifyOnFinish(true);
+      notify('Avisos habilitados para tareas que finalicen mientras Core esté funcionando.');
+    } catch(error) { notify(error instanceof Error ? error.message : 'No se pudieron activar las notificaciones',true); }
+  }
+  function completeTaskNotice(message:string) {
+    if(!notifyOnFinish)return;
+    void taskFinishedNotification(projectId, 'AliceLabs · '+(workspace?.name||'Proyecto'), message);
+  }
   async function askAgent(e?: FormEvent) {
     e?.preventDefault();
     const prompt = question.trim();
@@ -549,6 +629,7 @@ export default function App() {
         setHistory(prev => [...prev, { role: 'assistant', content: result.answer || '', timestamp: Date.now() }]);
       }
       log('Agente · ' + selectedLabel + ' / ' + (loginMode ? chatGPTModel : route!.model.id), 'success');
+      completeTaskNotice('La respuesta del agente está lista para revisar.');
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Fallo de conexión';
       setHistory(prev => [...prev, { role: 'assistant', content: 'Error: ' + msg, timestamp: Date.now() }]);
@@ -624,6 +705,7 @@ export default function App() {
       if (!response.ok) throw new Error(data.error || 'Error al ejecutar');
       setTerminalHistory(prev => [...prev, { id: Date.now(), command: cmd, output: data.output || '(sin salida)', exitCode: data.exitCode ?? null }]);
       log('Terminal: ' + cmd + ' · exit ' + String(data.exitCode), data.exitCode === 0 ? 'success' : 'error');
+      completeTaskNotice('Comando terminado: '+cmd.slice(0,65)+' · exit '+String(data.exitCode));
     } catch (error) {
       setTerminalHistory(prev => [...prev, { id: Date.now(), command: cmd, output: String(error), exitCode: null }]);
       log('Error de terminal', 'error');
@@ -638,6 +720,7 @@ export default function App() {
     { title: 'Conectar ChatGPT con correo', detail: 'OAuth oficial, sin clave API', icon: Bot, action: () => {setAuthMode('chatgpt');setDialog('chatgpt');} },
     { title: 'Conectar modelo de IA con API', detail: 'Clave API temporal', icon: Bot, action: () => {setAuthMode('api');setDialog('settings');} },
     { title: 'Terminal local', detail: 'Conectar Core Local Bridge', icon: SquareTerminal, action: () => setDialog('bridge') },
+    { title: 'Entorno remoto por proyecto', detail: 'Cloudflare Access + contenedor aislado · configuración opcional', icon: Cloud, action: () => setDialog('cloud') },
     { title: 'Mostrar cambios', detail: 'Archivos con modificaciones pendientes', icon: CircleDot, action: () => { setSection('changes'); setSidebarOpen(true); setDialog(null); } },
     ...allFiles.slice(0, 100).map(n => ({ title: n.name, detail: n.path, icon: FileCode2, action: () => { setDialog(null); void openNode(n); } }))
   ];
@@ -651,6 +734,7 @@ export default function App() {
       <button className="top-search" onClick={() => setDialog('commands')}><Search size={15}/><span>Buscar archivos, proyectos o acciones</span><kbd>Ctrl K</kbd></button>
       <div className="title-actions">
         <InstallApp/>
+        <button className="icon-button cloud-toggle" title="Entorno remoto de este proyecto" aria-label="Entorno remoto" onClick={() => setDialog('cloud')}><Cloud size={16}/></button>
         <span className={'api-status ' + (workerReady ? 'online' : workerReady === false ? 'offline' : '')}><span className="status-orb"/>{workerReady ? 'Worker conectado' : workerReady === false ? 'Worker desconectado' : 'Conectando...'}</span>
         <button className="icon-button hide-small" title="Centro de conexiones de IA" onClick={() => setDialog('providers')}><Settings2 size={16}/></button>
         <button className="icon-button" title={agentOpen ? 'Ocultar agente' : 'Mostrar agente'} onClick={() => setAgentOpen(v => !v)}>{agentOpen ? <PanelRightClose size={17}/> : <PanelRightOpen size={17}/>}</button>
@@ -741,7 +825,7 @@ export default function App() {
                 <div className="welcome-actions"><button className="primary-button" disabled={busyWorkspace} onClick={() => mobile ? fileImportRef.current?.click() : void openLocal()}>{busyWorkspace ? <LoaderCircle size={16} className="spin"/> : mobile ? <Upload size={16}/> : <FolderOpen size={16}/>} {mobile ? 'Importar código' : 'Abrir carpeta local'}</button><button className="secondary-button" onClick={() => setDialog('github')}><Github size={16}/> Explorar GitHub</button><button className="secondary-button" onClick={() => setDialog('providers')}><Bot size={16}/> Conectar mis IA</button></div>
                 {mobile && <div className="mobile-welcome-tip"><Smartphone size={14}/> Instala la app desde el botón superior. Importa archivos para editarlos o abre repositorios públicos.</div>}
                 <div className="welcome-shortcuts"><span><kbd>Ctrl</kbd> + <kbd>K</kbd> Paleta de acciones</span><span><kbd>Ctrl</kbd> + <kbd>S</kbd> Guardar</span></div>
-              </div><div className="welcome-grid"/><div className="welcome-version">CORE / MOBILE + MODEL CATALOG v0.6</div>
+              </div><div className="welcome-grid"/><div className="welcome-version">CORE / PROJECT WINDOWS + VOICE v0.7</div>
             </div>}
         </div>
         {bottomOpen && <section className="bottom-panel">
@@ -755,7 +839,7 @@ export default function App() {
       </main>
 
       {agentOpen && <><div className="resize-grip" onPointerDown={resizeAgent} title="Arrastra para cambiar el ancho"/><aside className="agent-pane">
-        <div className="agent-heading"><div className="agent-identity"><div className="agent-avatar"><Sparkles size={18}/></div><div><strong>Core Agent</strong><span>ASISTENTE DE DESARROLLO</span></div></div><button className="icon-button" title="Proveedores de IA" onClick={() => setDialog('providers')}><Settings2 size={16}/></button></div>
+        <div className="agent-heading"><div className="agent-identity"><div className="agent-avatar"><Sparkles size={18}/></div><div><strong>Core Agent</strong><span>ASISTENTE DE DESARROLLO</span></div></div><div className="agent-head-actions"><button className={'icon-button '+(notifyOnFinish?'alerts-active':'')} title={notifyOnFinish?'Desactivar avisos al terminar':'Activar aviso del navegador al terminar'} aria-label="Notificaciones de tareas" onClick={() => void enableTaskAlerts()}>{notifyOnFinish?<Bell size={16}/>:<BellOff size={16}/>}</button><button className="icon-button" title="Proveedores de IA" onClick={() => setDialog('providers')}><Settings2 size={16}/></button></div></div>
         <div className="agent-auth-modes"><button className={authMode==='chatgpt'?'mode-current':''} onClick={() => setAuthMode('chatgpt')}><Bot size={13}/> ChatGPT con correo</button><button className={authMode==='api'?'mode-current':''} onClick={() => setAuthMode('api')}><LockKeyhole size={13}/> API</button></div>
         <div className="agent-model-row"><div className="agent-model"><span className={authMode==='chatgpt'?(chatGPTActiveId && chatGPTReady?'connected-dot':'unconnected-dot'):(routePreview?'connected-dot':'unconnected-dot')}/><span>{authMode==='chatgpt'?(chatGPTAccounts.find(a=>a.id===chatGPTActiveId)?.email || 'ChatGPT sin conectar'):(routePreview ? routePreview.connection.label : 'Sin cuenta API')}</span><span className="agent-model-short">{authMode==='chatgpt'?(chatGPTModel || 'Iniciar sesión'):(routePreview ? routePreview.model.id : 'Conectar modelos')}</span></div><button onClick={() => setDialog(authMode==='chatgpt'?'chatgpt':'settings')} title="Rutas, modelos y cuentas"><ChevronDown size={15}/></button></div>
         <button className="route-banner" onClick={() => setDialog(authMode==='chatgpt'?'chatgpt':'settings')} title={authMode==='chatgpt'?'Cuenta seleccionada manualmente · OAuth oficial':routePreview?.reason || 'Conecta un proveedor para descubrir modelos'}>
@@ -770,7 +854,7 @@ export default function App() {
         </div>
         <div className="agent-compose">
           <div className="composer-tabs"><button className={agentMode==='chat'?'mode-active':''} onClick={() => setAgentMode('chat')}><MessageSquareText size={13}/> Preguntar</button><button className={agentMode==='edit'?'mode-active':''} onClick={() => setAgentMode('edit')}><Code2 size={13}/> Editar</button><button className={agentMode==='guide'?'mode-active':''} onClick={() => setAgentMode('guide')}><Bot size={13}/> Guía</button></div>
-          <form onSubmit={askAgent} className="compose-box"><textarea rows={3} value={question} onChange={e => setQuestion(e.target.value)} onKeyDown={e => { if (e.key==='Enter' && !e.shiftKey) {e.preventDefault(); void askAgent();} }} placeholder={agentMode==='edit'?'Describe el cambio que quieres aplicar...':agentMode==='guide'?'¿Qué quieres hacer? Te guiaré paso a paso.':'Pregunta sobre tu código o proyecto...'} disabled={agentBusy}/><div className="compose-bottom"><div className="context-options"><label className="file-context-toggle"><input type="checkbox" checked={agentMode==='edit' || includeFile} onChange={e=>setIncludeFile(e.target.checked)} disabled={agentMode==='edit' || !active}/><span>{agentMode==='edit' ? 'Archivo activo' : 'Archivo'}</span></label><label className="file-context-toggle"><input type="checkbox" checked={includeProject} onChange={e=>setIncludeProject(e.target.checked)} disabled={!workspace}/><span>Mapa proyecto</span></label></div><button className="send-button" type="submit" disabled={agentBusy || !question.trim()} title="Enviar al agente">{agentBusy ? <LoaderCircle size={17} className="spin"/> : <ArrowRight size={18}/>}</button></div></form>
+          <form onSubmit={askAgent} className="compose-box"><textarea rows={3} value={question} onChange={e => setQuestion(e.target.value)} onKeyDown={e => { if (e.key==='Enter' && !e.shiftKey) {e.preventDefault(); void askAgent();} }} placeholder={agentMode==='edit'?'Describe el cambio que quieres aplicar...':agentMode==='guide'?'¿Qué quieres hacer? Te guiaré paso a paso.':'Pregunta sobre tu código o proyecto...'} disabled={agentBusy}/><div className="compose-bottom"><div className="context-options"><label className="file-context-toggle"><input type="checkbox" checked={agentMode==='edit' || includeFile} onChange={e=>setIncludeFile(e.target.checked)} disabled={agentMode==='edit' || !active}/><span>{agentMode==='edit' ? 'Archivo activo' : 'Archivo'}</span></label><label className="file-context-toggle"><input type="checkbox" checked={includeProject} onChange={e=>setIncludeProject(e.target.checked)} disabled={!workspace}/><span>Mapa proyecto</span></label></div><VoiceInput disabled={agentBusy} onTranscript={text=>setQuestion(prev=>(prev.trim()?prev.trim()+' ':'')+text)} onNotice={notify}/><button className="send-button" type="submit" disabled={agentBusy || !question.trim()} title="Enviar al agente">{agentBusy ? <LoaderCircle size={17} className="spin"/> : <ArrowRight size={18}/>}</button></div></form>
           <div className="agent-disclaimer"><ShieldCheck size={12}/> {authMode==='chatgpt'?'Autorización oficial · credenciales solo en el compañero local':'Claves API solo en memoria'} · Sin evasión de límites</div>
         </div>
       </aside></>}
@@ -784,9 +868,9 @@ export default function App() {
       <button onClick={() => {setSidebarOpen(false);setAgentOpen(false);setBottomOpen(true);setBottomTab('terminal');}}><SquareTerminal size={19}/><span>Consola</span></button>
     </nav>}
     {toast && <div className="toast" role="status"><CircleDot size={15}/>{toast}<button onClick={()=>setToast('')}><X size={14}/></button></div>}
-    {dialog && <div className="modal-backdrop" onMouseDown={e => {if(e.target===e.currentTarget)setDialog(null);}}><div className={'dialog '+(dialog==='commands'?'command-dialog':dialog==='diff'?'diff-dialog':dialog==='settings'?'settings-dialog':dialog==='chatgpt'?'chatgpt-dialog':dialog==='providers'?'ai-hub-dialog':'')} role="dialog" aria-modal="true">
+    {dialog && <div className="modal-backdrop" onMouseDown={e => {if(e.target===e.currentTarget)setDialog(null);}}><div className={'dialog '+(dialog==='commands'?'command-dialog':dialog==='diff'?'diff-dialog':dialog==='settings'?'settings-dialog':dialog==='chatgpt'?'chatgpt-dialog':dialog==='providers'?'ai-hub-dialog':dialog==='cloud'?'cloud-dialog':'')} role="dialog" aria-modal="true">
       {dialog==='diff' && proposal ? <><div className="dialog-top"><div><span className="dialog-eyebrow">REVISIÓN DE CAMBIOS</span><h3>{proposal.path}</h3></div><button className="dialog-close" onClick={()=>setDialog(null)}><X size={18}/></button></div><div className="diff-body"><DiffEditor original={proposal.original} modified={proposal.next} language={languageOf(proposal.path)} theme="vs-dark" options={{ readOnly: true, automaticLayout:true, minimap:{enabled:false}, fontSize:12, renderSideBySide: true, scrollBeyondLastLine:false }} /></div><div className="dialog-actions diff-actions"><button className="secondary-button" onClick={()=>setDialog(null)}>Volver</button><button className="primary-button" onClick={()=>{applyProposal();setDialog(null);}}><Check size={14}/> Aplicar al editor</button></div></> : dialog==='commands' ? <><div className="command-input"><Search size={19}/><input autoFocus placeholder="Escribe una acción o un archivo..." value={commandFilter} onChange={e=>setCommandFilter(e.target.value)}/><kbd>ESC</kbd></div><div className="command-list">{visibleCommands.map((item,i)=><button key={i} onClick={item.action}><item.icon size={17}/><div><strong>{item.title}</strong><small>{item.detail}</small></div><ArrowRight size={14}/></button>)}</div><div className="command-footer"><Keyboard size={13}/> Acciones y archivos del proyecto</div></>
-      : <><div className="dialog-top"><div><span className="dialog-eyebrow">ALICELABS CORE</span><h3>{dialog==='github'?'Abrir repositorio GitHub':dialog==='new'?'Nuevo archivo':dialog==='settings'?'Cuentas API y modelos':dialog==='chatgpt'?'Conectar cuentas ChatGPT':dialog==='providers'?'Proveedores y cuentas de IA':'Conectar terminal local'}</h3></div><button className="dialog-close" onClick={()=>setDialog(null)}><X size={18}/></button></div>
+      : <><div className="dialog-top"><div><span className="dialog-eyebrow">ALICELABS CORE</span><h3>{dialog==='github'?'Abrir repositorio GitHub':dialog==='new'?'Nuevo archivo':dialog==='settings'?'Cuentas API y modelos':dialog==='chatgpt'?'Conectar cuentas ChatGPT':dialog==='providers'?'Proveedores y cuentas de IA':dialog==='cloud'?'Nube privada del proyecto':'Conectar terminal local'}</h3></div><button className="dialog-close" onClick={()=>setDialog(null)}><X size={18}/></button></div>
         {dialog==='github' && <form onSubmit={openGithub} className="dialog-content"><p>Explora cualquier repositorio público de GitHub, con árbol de archivos y editor en modo lectura. Para editar y guardar, abre una carpeta local.</p><label>URL del repositorio</label><div className="input-with-icon"><Github size={16}/><input autoFocus placeholder="https://github.com/usuario/repositorio" value={githubURL} onChange={e=>setGithubURL(e.target.value)}/></div><div className="dialog-actions"><button type="button" className="secondary-button" onClick={()=>setDialog(null)}>Cancelar</button><button type="submit" className="primary-button" disabled={busyWorkspace||!githubURL.trim()}>{busyWorkspace?<LoaderCircle size={15} className="spin"/>:<ArrowRight size={15}/>} Abrir repositorio</button></div></form>}
         {dialog==='new' && <form onSubmit={createNew} className="dialog-content"><p>Crea un archivo en la carpeta local. Puedes indicar subcarpetas con /.</p><label>Nombre o ruta</label><div className="input-with-icon"><FilePlus2 size={16}/><input autoFocus placeholder="src/components/Nuevo.tsx" value={newPath} onChange={e=>setNewPath(e.target.value)}/></div><div className="dialog-actions"><button className="secondary-button" type="button" onClick={()=>setDialog(null)}>Cancelar</button><button className="primary-button" disabled={!newPath.trim()}>Crear archivo</button></div></form>}
         {dialog==='settings' && <div className="dialog-content connection-manager">
@@ -840,6 +924,11 @@ export default function App() {
           onPair={pairChatGPT} onLogin={loginChatGPT} onSelect={selectChatGPT}
           onRefresh={refreshChatGPT} onDisconnect={disconnectChatGPT}
           onClose={() => setDialog(null)}
+        />}
+        {dialog==='cloud' && <CloudRunnerPanel
+          projectId={projectId} workspaceName={workspace?.name||'Proyecto sin abrir'}
+          activeFile={active?{path:active.path,text:active.text}:null}
+          onNotice={notify} onComplete={completeTaskNotice} onClose={()=>setDialog(null)}
         />}
         {dialog==='bridge' && <form onSubmit={connectBridge} className="dialog-content"><p>Para ejecutar comandos necesitas Core Local Bridge en tu propio equipo. Abre la terminal en la carpeta del repositorio y ejecuta:</p><div className="command-snippet"><code>node tools/local-bridge/server.mjs</code><button type="button" onClick={()=>void navigator.clipboard.writeText('node tools/local-bridge/server.mjs')} title="Copiar"><Copy size={15}/></button></div><p>El Bridge mostrará un token de sesión. Cada comando solicitará autorización en esa terminal.</p><label>Token de emparejamiento local</label><div className="input-with-icon"><LockKeyhole size={16}/><input type="password" autoFocus value={bridgeToken} onChange={e=>setBridgeToken(e.target.value)} placeholder="Pega el token que aparece en tu terminal"/></div><div className="dialog-actions"><button type="button" className="secondary-button" onClick={()=>setDialog(null)}>Cancelar</button><button className="primary-button" type="submit" disabled={!bridgeToken.trim()}><Wifi size={15}/> Conectar</button></div></form>}
         </>}

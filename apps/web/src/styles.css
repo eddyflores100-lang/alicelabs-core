@@ -282,3 +282,72 @@
 .ai-hub-native-actions .native-launch-button{display:flex;align-items:center;gap:6px;padding:7px 10px;border:1px solid #5a5892;background:#302c4a;color:#ddd2ff;border-radius:6px;font-size:10px;font-weight:700}
 .ai-hub-native-actions .native-launch-button:hover:not(:disabled){background:#49416e}
 .ai-hub-native-actions .native-launch-button:disabled{color:#8d97aa;background:#28303f}
+
+/* Independent project windows: each React workspace keeps separate chat, editor and credentials. */
+.core-window-root{display:flex;flex-direction:column;width:100%;height:100dvh;overflow:hidden;background:#0b0e17}
+.project-window-bar{display:flex;align-items:center;gap:8px;flex-shrink:0;height:43px;min-height:43px;padding:4px 11px;background:#1a1929;border-bottom:1px solid #47405f;z-index:25}
+.project-window-heading{display:flex;align-items:center;gap:7px;color:#bcaaff;font-size:11px;font-weight:800;letter-spacing:.2px;flex-shrink:0;padding:0 6px}
+.project-window-tabs{min-width:0;display:flex;align-items:center;flex:1;gap:4px;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;scrollbar-color:#52496d transparent}
+.project-window-tab{display:flex;align-items:center;gap:2px;min-width:111px;max-width:250px;border-radius:7px 7px 3px 3px;background:#222539;border:1px solid #303449;color:#9ba8bd}
+.project-window-tab.selected{background:#373051;border-color:#7866aa;color:#ede7ff}
+.project-window-tab>button:first-child{display:flex;align-items:center;gap:8px;min-width:0;flex:1;padding:8px 7px 8px 10px;font-size:11px;text-align:left}
+.project-window-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.project-window-dot{height:7px;width:7px;flex-shrink:0;border-radius:50%;background:#718092}
+.project-window-dot.unsaved{background:#ecb466}
+.project-window-close{width:23px;height:27px;display:flex;align-items:center;justify-content:center;flex-shrink:0;border-radius:4px;color:#9ca6b8}
+.project-window-close:hover{background:#59415a;color:#fff}
+.project-window-tools{display:flex;align-items:center;gap:4px;flex-shrink:0}
+.project-window-tools>button{height:31px;min-width:31px;display:flex;align-items:center;justify-content:center;gap:6px;border-radius:6px;color:#c8bafa}
+.project-window-tools>button:hover{background:#383250}
+.project-window-tools .project-window-new{padding:0 11px;background:#443a66;border:1px solid #6d5c97;color:#eee7ff;font-size:11px;font-weight:700}
+.project-window-content{min-height:0;flex:1;overflow:hidden;position:relative}
+.project-window-instance{height:100%;width:100%;overflow:hidden}
+.project-window-instance[hidden]{display:none!important}
+.project-window-instance .app-shell{height:100%!important;min-height:0!important}
+.project-window-status{height:21px;min-height:21px;display:flex;align-items:center;gap:7px;padding:2px 12px;font-size:9px;background:#1a1929;color:#aaa2c1;border-top:1px solid #312e42}
+.project-window-status svg{color:#97ccb1}
+@media(max-width:900px){
+  .project-window-bar{height:42px;min-height:42px;padding:4px 6px;gap:3px}
+  .project-window-heading{padding:0 4px}
+  .project-window-heading span{display:none}
+  .project-window-tab{min-width:93px;max-width:145px}
+  .project-window-tab>button:first-child{padding:7px 3px 7px 8px;font-size:10px;gap:5px}
+  .project-window-close{width:21px}
+  .project-window-tools .project-window-new{padding:0 7px}
+  .project-window-tools .project-window-new span{display:none}
+  .project-window-status{display:none}
+  .project-window-instance .explorer-pane,.project-window-instance .agent-pane{top:52px}
+}
+
+/* Permission-based voice input and task-completion notices. */
+.agent-head-actions{display:flex;align-items:center;gap:4px}
+.agent-head-actions .alerts-active{color:#b6efd6;background:#294338;border:1px solid #4e846a;border-radius:6px}
+.voice-button{display:flex;align-items:center;justify-content:center;gap:6px;border:1px solid #53516e;border-radius:7px;min-height:30px;padding:5px 8px;font-size:10px;color:#b9b4e8;background:#29283d;white-space:nowrap;flex-shrink:0}
+.voice-button:hover:not(:disabled){background:#413956;color:#f3eeff}
+.voice-button.recording{background:#5a303c;color:#ffccda;border-color:#bd6574}
+.voice-button:disabled{opacity:.45}
+.compose-bottom{gap:6px}
+.compose-bottom .context-options{flex:1;min-width:0}
+@media(max-width:420px){.voice-button{padding:6px;min-width:33px}.voice-button span{display:none}.compose-bottom .context-options{gap:7px}.agent-head-actions{gap:1px}}
+
+/* Cloud runner UI. Access-authenticated server is OPTIONAL and not deployed by default. */
+.cloud-toggle{color:#b9a8e9!important}
+.cloud-dialog{width:min(650px,95vw);max-height:87dvh}
+.cloud-manager{display:flex;flex-direction:column;gap:14px;padding:18px 22px 22px;color:#c0c8dc}
+.cloud-manager-intro{display:flex;align-items:flex-start;gap:12px;border:1px solid #555178;border-radius:9px;background:#282640;padding:13px}
+.cloud-manager-intro>svg{color:#d1beff;flex-shrink:0;margin-top:3px}
+.cloud-manager-intro strong{font-size:13px;color:#f3edff}
+.cloud-manager-intro p,.cloud-unconfigured p{font-size:11px;line-height:1.65;color:#aab6cb;margin:5px 0 0}
+.cloud-unconfigured{display:flex;align-items:flex-start;gap:12px;border:1px solid #6a5d59;background:#2c2930;border-radius:9px;padding:14px}
+.cloud-unconfigured svg{color:#c9b2a5;flex-shrink:0}
+.cloud-unconfigured strong{font-size:12px;color:#ede0d7}
+.cloud-unconfigured a{display:inline-flex;gap:6px;align-items:center;color:#d2c5ff;font-size:11px;margin-top:10px}
+.cloud-action-row{display:flex;align-items:center;gap:10px;justify-content:space-between;flex-wrap:wrap}
+.cloud-action-row>span{display:flex;align-items:center;gap:7px;font-size:11px;color:#bccce0;overflow-wrap:anywhere}
+.cloud-action-row select{flex:1;min-width:0;border:1px solid #46435d;padding:9px;border-radius:6px;background:#161e2c;color:#e2e9f8;font-size:11px}
+.cloud-action-label{font-size:11px;color:#d4dded;font-weight:700}
+.cloud-status{padding:10px;border-radius:8px;border:1px solid #4e596d;background:#242e3c;color:#b7d6e8;font-size:11px}
+.cloud-result{white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto;border:1px solid #3d485c;background:#101622;border-radius:9px;padding:13px;color:#d3deec;font:11px/1.7 'JetBrains Mono',Consolas,monospace}
+.cloud-security{display:flex;align-items:flex-start;gap:9px;border-top:1px solid #374153;padding-top:10px;color:#9fb6b1;line-height:1.65;font-size:10px}
+.cloud-security svg{flex-shrink:0;color:#9fdac1}
+@media(max-width:700px){.cloud-manager{padding:13px}.cloud-action-row>button{flex:1}.cloud-dialog{max-height:90dvh}}

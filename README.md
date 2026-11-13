@@ -56,7 +56,7 @@ On mobile you can browse public GitHub repositories, search model metadata, use 
 | ChatGPT account sign-in | **Experimental** | Local companion; real account eligibility and OAuth consent required |
 | Gemini CLI / Claude Code | **Local native launch option** | Their own official apps, separately authenticated; not a shortcut to their subscription tokens |
 | Monaco code editor | **Desktop web** | Syntax-aware local web editor |
-| Mobile code editor | **Available** | Touch-friendly text editor; import and export, not a native IDE |
+| Mobile code editor | **Available** | Touch-friendly text editor, import and export; Android native preview available |
 | Local files | **Desktop browser with permissions** | File System Access API, supported browsers only |
 | Public GitHub repositories | **Read-only** | Preview files; GitHub account writing is not yet implemented in web |
 | AI edit proposal | **Available** | Review a diff before applying; saving is a separate action |
@@ -64,6 +64,10 @@ On mobile you can browse public GitHub repositories, search model metadata, use 
 | Autonomous coding agent, multi-file changes | **Not yet** | No full Plan/Act tool-execution loop or remote sandbox |
 | Offline use | **Partial** | Cached application shell; model queries and online actions require connectivity |
 | Tauri desktop app | **Experimental** | Separate code path in `apps/desktop`; not a production installer |
+| Multi-project windows | **Available** | Separate editor/chat state with local IndexedDB snapshots; browser-only, no cross-device sync |
+| Dictation and task alerts | **Available where supported** | Explicit microphone/notification permissions, native Android plugins; no remote push while app closed |
+| Remote containers | **Source prototype only** | Cloudflare Access and Workers Paid required; no live remote shell |
+| WhatsApp completion templates | **Source adapter only** | Meta Business authorization, approved templates and recipient opt-in required |
 
 ### Mobile installation
 
@@ -175,3 +179,9 @@ Core needs security reviews, provider adapter tests, browser/PWA testing, access
   <strong>Useful? Star the repository to follow progress — and help us improve the next release.</strong><br/>
   <a href="https://github.com/eddyflores100-lang/alicelabs-core/stargazers">★ Star AliceLabs Core</a>
 </div>
+
+### Version 0.7: independent project windows, Android native preview, voice
+
+Core now has **multiple project windows** (up to 16 per browser), each with a distinct editor, AI conversation and cached draft; project snapshots remain only on the device. You can pop a project into a separate browser window. Dictation and optional completion notifications use explicit microphone and notification permissions. The Android preview (Capacitor) bundles the same IDE with native speech recognition and local notifications; see [Android instructions](apps/mobile/README.md).
+
+A new **Cloud runner** control shows whether a private remote execution service has been configured. The prototype source under [apps/remote](apps/remote/README.md) includes Cloudflare Access authentication boundaries, isolated container namespaces, explicit command approval and an opt-in Meta WhatsApp template adapter. **This remote service is not deployed, and the browser cannot perform autonomous background jobs until it is properly authenticated and hosted.**

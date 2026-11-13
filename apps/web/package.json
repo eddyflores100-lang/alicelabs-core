@@ -1,6 +1,6 @@
 {
   "name": "@core/web",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,6 +11,9 @@
     "test:routing": "node --experimental-strip-types --test test-routing.mjs"
   },
   "dependencies": {
+    "@capacitor-community/speech-recognition": "7.0.1",
+    "@capacitor/core": "8.6.2",
+    "@capacitor/local-notifications": "8.3.1",
     "@monaco-editor/react": "^4.7.0",
     "lucide-react": "^0.468.0",
     "monaco-editor": "^0.57.0",

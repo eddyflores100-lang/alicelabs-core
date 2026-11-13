@@ -1,0 +1,51 @@
+name: Android Preview APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/mobile/**'
+      - 'apps/web/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/android-preview.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  debug-apk:
+    name: Build signed-for-debug Android package
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build web assets
+        run: pnpm web:build
+      - name: Sync native plugins and embedded assets
+        run: pnpm --filter @core/mobile exec cap sync android
+      - name: Assemble Android preview APK
+        working-directory: apps/mobile/android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AliceLabs-Core-Android-Preview
+          path: apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14

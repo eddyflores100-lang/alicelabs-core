@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { ArrowDownToLine, CheckCircle2, Download, MoreVertical, Share2, Smartphone, X } from 'lucide-react';
 interface InstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -30,7 +31,7 @@ export default function InstallApp() {
       else setInstructions(true);
     } else setInstructions(true);
   }
-  if (standalone) return null;
+  if (standalone || Capacitor.isNativePlatform()) return null;
   return <>
     <button className="install-trigger" title="Instalar AliceLabs Core como app" onClick={() => void install()}><Download size={15}/><span>Instalar</span></button>
     {instructions && <div className="install-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setInstructions(false);}}>

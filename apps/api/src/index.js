@@ -23,6 +23,8 @@ function corsOrigin(origin) {
     const u = new URL(origin);
     if (u.protocol === 'https:' && (u.hostname === 'alicelabs-core.pages.dev' || u.hostname.endsWith('.alicelabs-core.pages.dev'))) return origin;
     if (u.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(u.hostname) && ['5173', '4173'].includes(u.port)) return origin;
+    // Capacitor Android and iOS serve packaged assets from a secure local origin.
+    if ((['http:','https:','capacitor:'].includes(u.protocol) && u.hostname === 'localhost' && !u.port)) return origin;
   } catch {}
   return '';
 }

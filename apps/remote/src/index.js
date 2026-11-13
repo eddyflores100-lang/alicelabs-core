@@ -1,0 +1,205 @@
+import { DurableObject } from 'cloudflare:workers';
+import { validProject, safePath, safeCommand, safeText } from './policy.mjs';
+import { validOptIn, whatsappReady, notifyWhatsApp } from './whatsapp.mjs';
+
+const ORIGINS = new Set(['https://alicelabs-core.pages.dev', 'http://localhost', 'https://localhost', 'capacitor://localhost']);
+function allowedOrigin(value) {
+  if (!value) return '';
+  try {
+    const u = new URL(value);
+    if (ORIGINS.has(u.origin) || value === 'capacitor://localhost') return value;
+    if (u.protocol === 'https:' && u.hostname.endsWith('.alicelabs-core.pages.dev')) return value;
+  } catch { /* invalid origin */ }
+  return '';
+}
+function responseJson(data,status=200,origin='') {
+  return new Response(JSON.stringify(data),{
+    status,headers:{'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff',
+      ...(origin?{'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Credentials':'true'}:{})}
+  });
+}
+export default {
+  async fetch(request,env,ctx) {
+    const origin=request.headers.get('Origin');
+    const allow=allowedOrigin(origin);
+    if(origin&&!allow)return responseJson({error:'Origin no autorizado'},403);
+    if(request.method==='OPTIONS') {
+      if(!allow)return responseJson({error:'Origin no autorizado'},403);
+      return new Response(null,{status:204,headers:{
+        'Access-Control-Allow-Origin':allow,'Access-Control-Allow-Credentials':'true',
+        'Access-Control-Allow-Methods':'GET, PUT, POST, OPTIONS',
+        'Access-Control-Allow-Headers':'Content-Type',
+        'Access-Control-Max-Age':'120','Vary':'Origin'
+      }});
+    }
+    // Access must be attached to this Worker. There is deliberately no dev bypass.
+    if(!ctx.access)return responseJson({error:'Acceso de Cloudflare Access requerido'},403,allow);
+    const identity=await ctx.access.getIdentity();
+    const owner=String(identity?.email||'').toLowerCase().trim();
+    if(!owner||owner.length>254)return responseJson({error:'Identidad no verificada'},403,allow);
+    const url=new URL(request.url);
+    const match=url.pathname.match(/^\/v1\/projects\/([a-f0-9-]{36})\/(status|run|notify|files(?:\/.*)?)$/i);
+    if(!match||!validProject(match[1]))return responseJson({error:'Proyecto inválido'},404,allow);
+    const action=match[2];
+    if(action==='run') {
+      if(request.method!=='POST')return responseJson({error:'Método inválido'},405,allow);
+      const raw=await request.text();
+      if(raw.length>8000)return responseJson({error:'Solicitud excesiva'},413,allow);
+      let data;try{data=JSON.parse(raw);}catch{return responseJson({error:'JSON inválido'},400,allow);}
+      const command=safeCommand(data);
+      if(!command)return responseJson({error:'Comando no permitido o sin autorización explícita'},400,allow);
+      request=new Request('https://internal.local/run',{method:'POST',body:JSON.stringify(command),
+        headers:{'Content-Type':'application/json'}});
+    } else if(action==='notify') {
+      if(request.method!=='GET' && request.method!=='PUT')return responseJson({error:'Método inválido'},405,allow);
+      if(request.method==='PUT') {
+        const raw=await request.text();
+        if(raw.length>900)return responseJson({error:'Solicitud excesiva'},413,allow);
+        let body;try{body=JSON.parse(raw);}catch{return responseJson({error:'JSON inválido'},400,allow);}
+        const settings=validOptIn(body);
+        if(!settings)return responseJson({error:'Requiere consentimiento explícito y número E.164 válido'},400,allow);
+        request=new Request('https://internal.local/notify',{method:'PUT',body:JSON.stringify(settings),
+          headers:{'Content-Type':'application/json'}});
+      } else request=new Request('https://internal.local/notify');
+    } else if(action==='status') {
+      if(request.method!=='GET')return responseJson({error:'Método inválido'},405,allow);
+      request=new Request('https://internal.local/status');
+    } else {
+      const path=safePath(action.slice(6));
+      if(!path)return responseJson({error:'Ruta de archivo inválida'},400,allow);
+      if(request.method==='PUT') {
+        const text=await request.text();
+        if(safeText(text)===null)return responseJson({error:'Solo archivos de texto de hasta 250 KB'},413,allow);
+        request=new Request('https://internal.local/file/'+path,{method:'PUT',body:text,
+          headers:{'Content-Type':'text/plain;charset=utf-8'}});
+      } else if(request.method==='GET')request=new Request('https://internal.local/file/'+path);
+      else return responseJson({error:'Método inválido'},405,allow);
+    }
+    // The namespace key is owner-bound so project IDs cannot reveal another account's files.
+    const key=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(owner+':'+match[1].toLowerCase()));
+    const name=Array.from(new Uint8Array(key)).map(x=>x.toString(16).padStart(2,'0')).join('');
+    const result=await env.SANDBOX.getByName(name).fetch(request);
+    const headers=new Headers(result.headers);
+    headers.set('Cache-Control','no-store');
+    if(allow){headers.set('Access-Control-Allow-Origin',allow);headers.set('Access-Control-Allow-Credentials','true');}
+    return new Response(result.body,{status:result.status,headers});
+  }
+};
+const PORT=8080;
+export class ProjectSandbox extends DurableObject {
+  constructor(ctx,env){super(ctx,env);this.env=env;this.starting=null;this.runTail=Promise.resolve();}
+  async fetch(request) {
+    const url=new URL(request.url);
+    const path=url.pathname;
+    if(path==='/status'){
+      const map=await this.ctx.storage.list({prefix:'file:'});
+      return responseJson({ok:true,files:map.size,running:!!this.ctx.container?.running,isolated:true});
+    }
+    if(path==='/notify'){
+      if(request.method==='GET'){
+        const settings=await this.ctx.storage.get('notification:settings');
+        return responseJson({ok:true,enabled:!!settings?.enabled,
+          configured:whatsappReady(this.env),
+          recipient:settings?.to?('••••'+settings.to.slice(-4)):null});
+      }
+      if(request.method==='PUT'){
+        const settings=validOptIn(await request.json());
+        if(!settings)return responseJson({error:'Consentimiento o destinatario no válido'},400);
+        await this.ctx.storage.put('notification:settings',settings);
+        return responseJson({ok:true,enabled:settings.enabled,configured:whatsappReady(this.env)});
+      }
+      return responseJson({error:'Método inválido'},405);
+    }
+    if(path.startsWith('/file/')){
+      const name=safePath(path.slice('/file/'.length));
+      if(!name)return responseJson({error:'Ruta inválida'},400);
+      const key='file:'+name;
+      if(request.method==='GET'){
+        const text=await this.ctx.storage.get(key);
+        return typeof text==='string'?new Response(text,{headers:{'Content-Type':'text/plain;charset=utf-8','Cache-Control':'no-store'}}):responseJson({error:'Archivo no encontrado'},404);
+      }
+      if(request.method==='PUT'){
+        const text=await request.text();
+        if(safeText(text)===null)return responseJson({error:'Archivo demasiado grande'},413);
+        const files=await this.ctx.storage.list({prefix:'file:'});
+        if(!files.has(key)&&files.size>=80)return responseJson({error:'Máximo 80 archivos por espacio'},413);
+        await this.ctx.storage.put(key,text);
+        // Restore onto the active container, if any. No container starts for file uploads.
+        if(this.ctx.container?.running) {
+          try {await this.ctx.container.getTcpPort(PORT).fetch('http://container/file/'+name,{method:'PUT',body:text});}
+          catch{/* next run rehydrates saved files */}
+        }
+        return responseJson({ok:true,path:name});
+      }
+      return responseJson({error:'Método inválido'},405);
+    }
+    if(path==='/run'&&request.method==='POST'){
+      const command=await request.json();
+      if(!safeCommand({...command,approved:true}))return responseJson({error:'Comando no permitido'},400);
+      const job=this.runTail.then(()=>this.execute(command));
+      this.runTail=job.catch(()=>{});
+      try{return await job;}catch(e){return responseJson({error:'Sandbox no disponible: '+String(e.message||e).slice(0,150)},503);}
+    }
+    return responseJson({error:'Ruta desconocida'},404);
+  }
+  async boot() {
+    if(!this.ctx.container)throw Error('Cloudflare Containers no está habilitado');
+    if(this.ctx.container.running)return;
+    if(!this.starting)this.starting=(async()=>{
+      this.ctx.container.start({
+        image:this.ctx.container.images.base,instance:'lite',enableInternet:false
+      });
+      await this.ctx.container.setInactivityTimeout(120000);
+      const port=this.ctx.container.getTcpPort(PORT);
+      for(let i=0;i<70;i++){
+        try{
+          const r=await port.fetch('http://container/health',{signal:AbortSignal.timeout(800)});
+          await r.body?.cancel();
+          if(r.ok){
+            const files=await this.ctx.storage.list({prefix:'file:'});
+            for(const [key,value] of files){
+              if(typeof value!=='string')continue;
+              const path=key.slice(5);
+              await port.fetch('http://container/file/'+path,{method:'PUT',body:value});
+            }
+            return;
+          }
+        }catch{/* continue while container boots */}
+        await scheduler.wait(250);
+      }
+      throw Error('El contenedor no respondió');
+    })().finally(()=>{this.starting=null;});
+    return this.starting;
+  }
+  async execute(command) {
+    await this.boot();
+    const port=this.ctx.container.getTcpPort(PORT);
+    const run=await port.fetch('http://container/run',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify(command),
+      signal:AbortSignal.timeout(90000)});
+    const output=await run.text();
+    // Persist all text files after each approved command before returning its result.
+    const snapshot=await port.fetch('http://container/snapshot',{signal:AbortSignal.timeout(15000)});
+    if(snapshot.ok){
+      const data=await snapshot.json();
+      if(data.files&&Object.keys(data.files).length<=80){
+        const current=await this.ctx.storage.list({prefix:'file:'});
+        for(const key of current.keys())if(!(key.slice(5) in data.files))await this.ctx.storage.delete(key);
+        for(const [path,text] of Object.entries(data.files))if(safePath(path)&&safeText(text)!==null)await this.ctx.storage.put('file:'+path,text);
+      }
+    }
+    if(run.ok&&whatsappReady(this.env)){
+      let result;try{result=JSON.parse(output);}catch{result={};}
+      if(result.ok){
+        const settings=await this.ctx.storage.get('notification:settings');
+        const last=Number(await this.ctx.storage.get('notification:last')||0);
+        if(settings?.enabled&&settings.optIn&&Date.now()-last>60000){
+          await this.ctx.storage.put('notification:last',Date.now());
+          this.ctx.waitUntil(notifyWhatsApp(this.env,settings,
+            this.ctx.id.toString().slice(0,8),'tarea finalizada').catch(()=>({sent:false})));
+        }
+      }
+    }
+    return new Response(output,{status:run.status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
+  }
+}
