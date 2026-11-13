@@ -9,7 +9,10 @@
     "build": "pnpm --filter @core/desktop build",
     "web:dev": "pnpm --filter @core/web dev",
     "web:build": "pnpm --filter @core/web build",
-    "agent:check": "node --check apps/api/src/index.js",
+    "agent:check": "node --check apps/api/src/index.js && node --check apps/api/src/catalog.js",
+    "local:start": "node tools/local-runner.mjs",
+    "test:web": "pnpm --filter @core/web test:routing",
+    "test:worker": "pnpm --filter @core/agent-worker test",
     "typecheck": "pnpm --recursive typecheck"
   }
 }

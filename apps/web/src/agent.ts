@@ -8,7 +8,7 @@ export type ProviderMeta = { remaining: number | null; limit: number | null } | 
 export type Connection = {
   id: string; provider: Provider; label: string; apiKey: string; models: ModelInfo[]; refreshedAt: number; meta: ProviderMeta;
 };
-export type GuideStep = { title: string; description: string; action: 'open_folder' | 'open_github' | 'search_files' | 'configure_ai' | 'open_terminal' | 'save_active' | 'edit_active' | null };
+export type GuideStep = { title: string; description: string; action: 'open_folder' | 'open_github' | 'search_files' | 'configure_ai' | 'open_terminal' | 'save_active' | 'edit_active' | 'run_command' | null; command?: string | null };
 export type Guidance = { summary: string; steps: GuideStep[] };
 export type AgentResponse = { ok: boolean; answer?: string; error?: string; action?: 'edit' | 'chat' | 'guide'; model?: string; provider?: Provider; durationMs?: number; guide?: Guidance };
 export const DEFAULT_MODEL: Record<Provider, string> = {

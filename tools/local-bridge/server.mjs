@@ -7,7 +7,7 @@
 import http from 'node:http';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 const ROOT = path.resolve(process.argv[2] || process.cwd());
 const TOKEN = crypto.randomBytes(32).toString('hex');
@@ -72,6 +72,48 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') { reply(res, origin, 204, {}); return; }
   if (req.method === 'GET' && req.url === '/health') {
     reply(res, origin, 200, { ok: true, service: 'alicelabs-core-bridge', workspace: ROOT, pairing: 'required', approval: 'local-per-command' });
+    return;
+  }
+  if (req.method === 'GET' && req.url === '/tools') {
+    const received = String(req.headers['x-core-token'] || '');
+    const a = Buffer.from(received), b = Buffer.from(TOKEN);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a,b)) { reply(res,origin,401,{error:'Token incorrecto'}); return; }
+    const available = {};
+    for (const name of ['agy','gemini','claude']) {
+      available[name==='agy'?'antigravity':name] = process.platform === 'win32' &&
+        spawnSync('where.exe',[name],{windowsHide:true,timeout:3500}).status === 0;
+    }
+    reply(res,origin,200,{ok:true,available,bridgeVersion:'0.2.0'});
+    return;
+  }
+  if (req.method === 'POST' && req.url === '/launch') {
+    const received = String(req.headers['x-core-token'] || '');
+    const a = Buffer.from(received), b = Buffer.from(TOKEN);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a,b)) { reply(res,origin,401,{error:'Token incorrecto'}); return; }
+    let payload = '';
+    for await (const chunk of req) {
+      payload += chunk.toString();
+      if (payload.length > 1024) { reply(res,origin,413,{error:'Solicitud demasiado grande'}); return; }
+    }
+    let tool = '';
+    try { tool = JSON.parse(payload).tool; } catch {}
+    if (!['antigravity','gemini','claude'].includes(tool)) { reply(res,origin,400,{error:'Herramienta no permitida'}); return; }
+    if (process.platform !== 'win32') { reply(res,origin,422,{error:'El lanzamiento interactivo está disponible únicamente en Windows por ahora'}); return; }
+    const executable = tool==='antigravity' ? 'agy' : tool;
+    if (spawnSync('where.exe',[executable],{windowsHide:true,timeout:3500}).status !== 0) {
+      reply(res,origin,404,{error:'El CLI oficial no está instalado en el equipo: '+tool}); return;
+    }
+    const approved = await approve('ABRIR CLI OFICIAL: '+tool+' en una nueva terminal de Windows');
+    if (!approved) { reply(res,origin,403,{error:'Inicio rechazado en la terminal local'}); return; }
+    try {
+      const child = spawn('powershell.exe',['-NoExit','-Command','& '+executable],{
+        cwd: ROOT, detached: true, stdio: 'ignore', windowsHide: false
+      });
+      child.unref();
+      reply(res,origin,200,{ok:true,tool,started:true,message:'Se solicitó abrir el CLI en una nueva terminal nativa'});
+    } catch {
+      reply(res,origin,500,{error:'No se pudo abrir la terminal nativa'});
+    }
     return;
   }
   if (req.method !== 'POST' || req.url !== '/run') { reply(res, origin, 404, { error: 'Ruta no encontrada' }); return; }

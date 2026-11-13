@@ -1,0 +1,17 @@
+# AliceLabs Core
+
+> Open-source, local-first, multi-model AI development workspace. Web/PWA, local bridge, and a Tauri desktop foundation.
+
+- Homepage: https://alicelabs-core.pages.dev/
+- Source code: https://github.com/eddyflores100-lang/alicelabs-core
+- License: MIT
+- Public model directory: backed by Models.dev; listing does not grant execution rights
+- Web capabilities: Monaco editor, browser-granted local text files (supported desktop browsers), GitHub public repository browsing (read-only), BYOK model connections, proposal review, optional paired local terminal bridge
+- Mobile: installable Progressive Web App; imported text files can be edited and exported on mobile; remote PC terminal is NOT available via localhost on a phone
+- Accounts: ChatGPT OAuth companion is beta and requires eligible individual authorization; other vendors' web chat sessions are not reused
+- Limitations: no remote multi-device execution, multi-agent sandbox, Git pushes, or full native mobile release yet
+- Privacy: keys and local pairing tokens are not stored in Cloudflare database; per-user BYOK keys only in tab memory
+- Docs: https://github.com/eddyflores100-lang/alicelabs-core/tree/main/docs
+- Issues: https://github.com/eddyflores100-lang/alicelabs-core/issues
+
+This file provides discovery metadata; it does not override GitHub documentation or security policy.

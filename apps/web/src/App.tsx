@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { FormEvent, PointerEvent as ReactPointerEvent } from 'react';
+import type { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent } from 'react';
 import Editor, { DiffEditor, loader } from '@monaco-editor/react';
 import type * as monaco from 'monaco-editor';
 import {
-  Activity, ArrowRight, Bot, Braces, Check, CheckCircle2,
+  Activity, ArrowRight, Bot, Braces, Check, CheckCircle2, Download, Upload, Smartphone,
   ChevronDown, ChevronRight, CircleDot, Code2, Copy, File, FileCode2,
   FilePlus2, Folder, FolderOpen, FolderPlus, GitBranch, Github, HardDrive,
   Keyboard, Layers3, LoaderCircle, LockKeyhole, MessageSquareText,
@@ -22,6 +22,7 @@ import { chooseRoute } from './routing';
 import type { Priority } from './routing';
 import ChatGPTPanel from './ChatGPTPanel';
 import AIConnectionsHub from './AIConnectionsHub';
+import InstallApp from './InstallApp';
 import { companionHealth, getChatGPTAccounts, getChatGPTModels, startChatGPTLogin, disconnectChatGPTAccount, runChatGPT } from './chatgpt';
 import type { ChatGPTAccount, ChatGPTModel } from './chatgpt';
 
@@ -78,11 +79,12 @@ export default function App() {
   const [section, setSection] = useState<Section>('files');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState('');
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [agentOpen, setAgentOpen] = useState(true);
+  const [mobile, setMobile] = useState(() => window.matchMedia('(max-width: 900px)').matches);
+  const [sidebarOpen, setSidebarOpen] = useState(() => !window.matchMedia('(max-width: 900px)').matches);
+  const [agentOpen, setAgentOpen] = useState(() => !window.matchMedia('(max-width: 900px)').matches);
   const [bottomOpen, setBottomOpen] = useState(false);
   const [bottomTab, setBottomTab] = useState<'events' | 'terminal'>('events');
-  const [dialog, setDialog] = useState<Dialog>(null);
+  const [dialog, setDialog] = useState<Dialog>(() => new URLSearchParams(window.location.search).get('open') === 'models' ? 'providers' : null);
   const [githubURL, setGithubURL] = useState('');
   const [newPath, setNewPath] = useState('');
   const [busyWorkspace, setBusyWorkspace] = useState(false);
@@ -120,6 +122,8 @@ export default function App() {
   const [agentWidth, setAgentWidth] = useState(380);
   const [bridgeToken, setBridgeToken] = useState('');
   const [bridgeConnected, setBridgeConnected] = useState(false);
+  const [bridgeTools, setBridgeTools] = useState<{antigravity:boolean;gemini:boolean;claude:boolean}>({antigravity:false,gemini:false,claude:false});
+  const [launchingTool, setLaunchingTool] = useState<string | null>(null);
   const [bridgeWorkspace, setBridgeWorkspace] = useState('');
   const [terminalCommand, setTerminalCommand] = useState('');
   const [terminalRunning, setTerminalRunning] = useState(false);
@@ -127,6 +131,8 @@ export default function App() {
   const [commandFilter, setCommandFilter] = useState('');
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const terminalRef = useRef<HTMLDivElement | null>(null);
+  const fileImportRef = useRef<HTMLInputElement | null>(null);
+  const importedContents = useRef<Map<string, string>>(new Map());
   const toastTimer = useRef<number | null>(null);
 
   const active = useMemo(() => docs.find(doc => doc.path === activePath) || null, [docs, activePath]);
@@ -155,6 +161,17 @@ export default function App() {
   useEffect(() => {
     void pingWorker().then(setWorkerReady);
   }, []);
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 900px)');
+    function update(ev: MediaQueryListEvent) {
+      setMobile(ev.matches);
+      setSidebarOpen(!ev.matches);
+      setAgentOpen(!ev.matches);
+      setBottomOpen(false);
+    }
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
   // Poll only while the ChatGPT account manager is open. Tokens stay local.
   useEffect(() => {
     if (dialog !== 'chatgpt' || !chatGPTReady || !chatGPTPair) return;
@@ -182,7 +199,51 @@ export default function App() {
     log('Proyecto abierto: ' + next.name + (next.kind === 'github' ? ' · GitHub lectura' : ' · Carpeta local'));
     return true;
   }
+  function exportImportedDoc(doc: OpenDocument) {
+    const blob = new Blob([doc.text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const element = document.createElement('a');
+    element.href = url;
+    element.download = doc.name;
+    element.style.display = 'none';
+    document.body.appendChild(element);
+    element.click();
+    element.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+  async function importFiles(event: ChangeEvent<HTMLInputElement>) {
+    const fileList = event.target.files;
+    if (!fileList || !fileList.length) return;
+    const files = Array.from(fileList).slice(0, 30);
+    event.target.value = '';
+    if (dirty.length && !window.confirm('Hay cambios sin guardar. ¿Importar otro proyecto y descartarlos?')) return;
+    const nextDocs: OpenDocument[] = [];
+    const nextNodes: FileNode[] = [];
+    const imported = new Map<string, string>();
+    for (const file of files) {
+      if (file.size > 900000) { notify(file.name + ': máximo 900 KB por archivo', true); continue; }
+      const text = await file.text();
+      if (text.includes('\0')) { notify(file.name + ': no se admiten archivos binarios', true); continue; }
+      let name = file.name;
+      let i = 1;
+      while (imported.has(name)) name = '(' + ++i + ') ' + file.name;
+      imported.set(name, text);
+      nextDocs.push({ path: name, name, text, savedText: text, language: languageOf(file.name), readOnly: false });
+      nextNodes.push({ path: name, name, kind: 'file' });
+    }
+    if (!nextDocs.length) return;
+    importedContents.current = imported;
+    setWorkspace({ kind: 'local', name: 'Archivos importados', nodes: nextNodes });
+    setDocs(nextDocs);
+    setActivePath(nextDocs[0].path);
+    setSection('files');
+    setSidebarOpen(false);
+    setAgentOpen(false);
+    setProposal(null);
+    notify(nextDocs.length + ' archivos importados. En móvil, Guardar exporta una copia a Descargas.');
+  }
   async function openLocal() {
+    if (mobile) { fileImportRef.current?.click(); return; }
     setBusyWorkspace(true);
     try { resetWorkspace(await chooseLocalWorkspace()); } catch (e) {
       if (e instanceof Error && e.name === 'AbortError') return;
@@ -197,14 +258,17 @@ export default function App() {
   }
   const openNode = useCallback(async (node: FileNode) => {
     if (!workspace || node.kind !== 'file') return;
-    if (docs.some(d => d.path === node.path)) { setActivePath(node.path); return; }
+    if (docs.some(d => d.path === node.path)) { setActivePath(node.path); if (mobile) setSidebarOpen(false); return; }
     try {
-      const document = await readDocument(node, workspace);
+      const document = workspace.kind === 'local' && !workspace.root && !node.handle ?
+        { path: node.path, name: node.name, text: importedContents.current.get(node.path) || '', savedText: importedContents.current.get(node.path) || '', readOnly: false, language: languageOf(node.name) } as OpenDocument :
+        await readDocument(node, workspace);
       setDocs(prev => prev.some(d => d.path === document.path) ? prev : [...prev, document]);
       setActivePath(document.path);
+      if (mobile) setSidebarOpen(false);
       log('Archivo abierto: ' + node.path);
     } catch (error) { notify(error instanceof Error ? error.message : 'Error al leer archivo', true); }
-  }, [workspace, docs, log, notify]);
+  }, [workspace, docs, log, notify, mobile]);
   function toggleFolder(path: string) {
     setExpanded(prev => { const next = new Set(prev); if (next.has(path)) next.delete(path); else next.add(path); return next; });
   }
@@ -216,15 +280,17 @@ export default function App() {
     if (!doc) return;
     if (doc.readOnly) return notify('Repositorio remoto en modo lectura. Abre una carpeta local para guardar.', true);
     try {
-      await persistDocument(doc);
+      if (!doc.handle) {
+        exportImportedDoc(doc);
+      } else await persistDocument(doc);
       setDocs(prev => prev.map(d => d.path === path && d.text === doc.text ? { ...d, savedText: doc.text } : d));
-      notify('Guardado: ' + doc.path);
+      notify((doc.handle ? 'Guardado: ' : 'Exportación solicitada: ') + doc.path);
     } catch (error) { notify(error instanceof Error ? error.message : 'No se pudo guardar', true); }
   }
   async function saveAll() {
     const changes = docs.filter(d => d.text !== d.savedText && !d.readOnly);
     for (const doc of changes) {
-      try { await persistDocument(doc); setDocs(prev => prev.map(d => d.path === doc.path && d.text === doc.text ? { ...d, savedText: doc.text } : d)); }
+      try { if (doc.handle) await persistDocument(doc); else exportImportedDoc(doc); setDocs(prev => prev.map(d => d.path === doc.path && d.text === doc.text ? { ...d, savedText: doc.text } : d)); }
       catch (error) { notify('Error guardando ' + doc.path + ': ' + String(error), true); return; }
     }
     if (changes.length) notify(changes.length + ' archivo(s) guardado(s)');
@@ -251,6 +317,7 @@ export default function App() {
   }
   async function refreshFiles() {
     if (!workspace) return;
+    if (workspace.kind === 'local' && !workspace.root) return notify('Los archivos importados solo se actualizan al volver a importarlos', true);
     try {
       const next = workspace.kind === 'local' ? { ...workspace, nodes: await scanFolder(workspace.root!) } :
         await loadPublicRepository('https://github.com/' + workspace.github!.owner + '/' + workspace.github!.repo);
@@ -324,7 +391,7 @@ export default function App() {
     setSelectedModel('auto');
     notify('Conexión desconectada de esta pestaña');
   }
-  function runGuideStep(action: GuideStep['action']) {
+  function runGuideStep(action: GuideStep['action'], command?: string | null) {
     if (!action) return;
     if (action === 'open_folder') void openLocal();
     else if (action === 'open_github') setDialog('github');
@@ -332,6 +399,14 @@ export default function App() {
     else if (action === 'configure_ai') setDialog('settings');
     else if (action === 'open_terminal') { setBottomOpen(true); setBottomTab('terminal'); if (!bridgeConnected) setDialog('bridge'); }
     else if (action === 'save_active') { if (activePath) void saveDoc(activePath); else notify('Primero abre un archivo', true); }
+    else if (action === 'run_command' && command) {
+      if (mobile) return notify('La PWA del teléfono no tiene terminal remota. Abre Core en tu computadora.', true);
+      setTerminalCommand(command);
+      setBottomTab('terminal');
+      setBottomOpen(true);
+      if (!bridgeConnected) setDialog('bridge');
+      notify('Comando preparado para revisión. Pulsa ejecutar y autorízalo localmente.');
+    }
     else if (action === 'edit_active') {
       setAgentMode('edit');
       setQuestion('Propón una mejora concreta de este archivo sin alterar las funciones existentes.');
@@ -504,12 +579,36 @@ export default function App() {
       const response = await fetch(LOCAL_BRIDGE + '/health', { signal: AbortSignal.timeout(4000), cache: 'no-store' });
       const data = await response.json();
       if (!response.ok || data.service !== 'alicelabs-core-bridge') throw new Error('No se encontró un Core Local Bridge compatible');
+      const toolsResponse = await fetch(LOCAL_BRIDGE + '/tools', { headers: {'X-Core-Token': bridgeToken.trim()}, cache:'no-store', signal:AbortSignal.timeout(6000) });
+      if (!toolsResponse.ok) throw new Error('Token inválido o Bridge desactualizado');
+      const toolsData = await toolsResponse.json();
+      if (!toolsData.ok) throw new Error('Bridge sin autorización');
+      setBridgeTools({ antigravity:toolsData.available?.antigravity===true, gemini: toolsData.available?.gemini===true, claude: toolsData.available?.claude===true });
       setBridgeWorkspace(data.workspace || 'Local');
       setBridgeConnected(true); setDialog(null); setBottomOpen(true); setBottomTab('terminal');
       notify('Terminal local conectado a ' + (data.workspace || 'la carpeta configurada'));
     } catch {
       setBridgeConnected(false); notify('Bridge no disponible. Inícialo en tu equipo y vuelve a conectar.', true);
     }
+  }
+  async function launchOfficialCLI(tool: 'antigravity' | 'gemini' | 'claude') {
+    if (mobile) return notify('El teléfono no puede abrir terminales del equipo mediante localhost. Usa Core desde Windows.', true);
+    if (!bridgeConnected || !bridgeToken.trim()) { setDialog('bridge'); return; }
+    if (!bridgeTools[tool]) return notify('Primero instala el CLI oficial ' + tool + ' en tu equipo', true);
+    if (launchingTool) return;
+    setLaunchingTool(tool);
+    try {
+      const response = await fetch(LOCAL_BRIDGE + '/launch', {
+        method:'POST', headers:{'Content-Type':'application/json','X-Core-Token':bridgeToken.trim()},
+        body:JSON.stringify({tool}),signal:AbortSignal.timeout(120000)
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || 'No se pudo abrir el cliente');
+      notify('Solicitado ' + tool + '. Revisa la nueva terminal nativa y autentícate allí con el proveedor.');
+      log('CLI abierto con aprobación local: ' + tool, 'success');
+    } catch(error) {
+      notify(error instanceof Error ? error.message : 'Error al abrir la terminal', true);
+    } finally { setLaunchingTool(null); }
   }
   async function runTerminal(e: FormEvent) {
     e.preventDefault();
@@ -545,11 +644,13 @@ export default function App() {
   const visibleCommands = commands.filter(c => (c.title + ' ' + c.detail).toLowerCase().includes(commandFilter.toLowerCase())).slice(0, 35);
 
   return <div className="app-shell" style={{ '--agent-width': agentWidth + 'px' } as React.CSSProperties}>
+    <input aria-label="Importar archivos de texto" ref={fileImportRef} type="file" multiple accept=".txt,.md,.html,.css,.js,.jsx,.ts,.tsx,.json,.xml,.svg,.py,.go,.rs,.yml,.yaml,.toml,.sql,.sh,.java,.c,.cpp,.h,.php,.rb,.vue,.svelte" style={{ display:'none' }} onChange={importFiles}/>
     <div className="titlebar">
       <div className="title-brand"><BrandMark /><span className="brand-word">AliceLabs</span><span className="brand-core">CORE</span><span className="brand-separator" /></div>
       <button className="project-crumb" onClick={() => setDialog('commands')}><Layers3 size={14}/><span>{workspace?.name || 'Nuevo espacio de trabajo'}</span><ChevronDown size={13}/></button>
       <button className="top-search" onClick={() => setDialog('commands')}><Search size={15}/><span>Buscar archivos, proyectos o acciones</span><kbd>Ctrl K</kbd></button>
       <div className="title-actions">
+        <InstallApp/>
         <span className={'api-status ' + (workerReady ? 'online' : workerReady === false ? 'offline' : '')}><span className="status-orb"/>{workerReady ? 'Worker conectado' : workerReady === false ? 'Worker desconectado' : 'Conectando...'}</span>
         <button className="icon-button hide-small" title="Centro de conexiones de IA" onClick={() => setDialog('providers')}><Settings2 size={16}/></button>
         <button className="icon-button" title={agentOpen ? 'Ocultar agente' : 'Mostrar agente'} onClick={() => setAgentOpen(v => !v)}>{agentOpen ? <PanelRightClose size={17}/> : <PanelRightOpen size={17}/>}</button>
@@ -578,8 +679,8 @@ export default function App() {
         <div className="pane-caption">
           <span>{section === 'files' ? 'EXPLORADOR' : section === 'search' ? 'BÚSQUEDA' : section === 'changes' ? 'CAMBIOS' : 'ACTIVIDAD'}</span>
           <div className="pane-actions">
-            {section === 'files' && <><button title="Nuevo archivo" disabled={!workspace || workspace.kind !== 'local'} onClick={() => setDialog('new')}><FilePlus2 size={15}/></button>
-              <button title="Actualizar árbol" disabled={!workspace} onClick={() => void refreshFiles()}><RefreshCw size={15}/></button></>}
+            {section === 'files' && <><button title="Nuevo archivo" disabled={!workspace?.root || workspace.kind !== 'local'} onClick={() => setDialog('new')}><FilePlus2 size={15}/></button>
+              <button title="Actualizar árbol" disabled={!workspace || (workspace.kind==='local' && !workspace.root)} onClick={() => void refreshFiles()}><RefreshCw size={15}/></button></>}
             <button title="Ocultar panel" onClick={() => setSidebarOpen(false)}><PanelLeftClose size={15}/></button>
           </div>
         </div>
@@ -588,7 +689,7 @@ export default function App() {
             <div className="workspace-head"><span className="workspace-head-title">{workspace.name.toUpperCase()}</span><span className="workspace-source">{workspace.kind === 'github' ? <Github size={12}/> : <HardDrive size={12}/>}</span></div>
             <FileTree nodes={workspace.nodes} expanded={expanded} onToggle={toggleFolder} onOpen={openNode} current={activePath}/>
             {workspace.nodes.length === 0 && <div className="empty-sidebar">Esta carpeta no contiene archivos visibles.</div>}
-          </> : <div className="sidebar-placeholder"><FolderPlus size={26}/><strong>Sin proyecto</strong><span>Abre una carpeta local o explora un repositorio GitHub.</span><button className="thin-action" onClick={() => void openLocal()}>Abrir carpeta <ArrowRight size={13}/></button></div>}
+          </> : <div className="sidebar-placeholder"><FolderPlus size={26}/><strong>Sin proyecto</strong><span>Abre una carpeta local o explora un repositorio GitHub.</span><button className="thin-action" onClick={() => mobile ? fileImportRef.current?.click() : void openLocal()}>{mobile ? 'Importar código' : 'Abrir carpeta'} <ArrowRight size={13}/></button></div>}
         </div>}
         {section === 'search' && <div className="sidebar-body">
           <div className="search-field"><Search size={14}/><input placeholder="Filtrar archivos por ruta..." value={filter} onChange={e => setFilter(e.target.value)} autoFocus/></div>
@@ -604,7 +705,7 @@ export default function App() {
         {section === 'activity' && <div className="sidebar-body event-sidebar">
           {logs.slice(0, 45).map(l => <div key={l.id} className={'activity-entry ' + l.level}><span>{l.time}</span><p>{l.text}</p></div>)}
         </div>}
-        <div className="sidebar-footer"><button onClick={() => void openLocal()}><Plus size={14}/> Abrir carpeta</button><button onClick={() => setDialog('github')}><Github size={14}/> GitHub</button></div>
+        <div className="sidebar-footer"><button onClick={() => mobile ? fileImportRef.current?.click() : void openLocal()}><Plus size={14}/> {mobile ? 'Importar' : 'Abrir carpeta'}</button><button onClick={() => setDialog('github')}><Github size={14}/> GitHub</button></div>
       </aside>}
 
       <main className="editor-main">
@@ -623,26 +724,31 @@ export default function App() {
         </div>
         {active && <div className="breadcrumbs"><span>{workspace?.name}</span><ChevronRight size={12}/>{active.path.split('/').map((part,i,arr) => <span className={i === arr.length-1?'breadcrumb-current':''} key={i}>{part}{i < arr.length - 1 && <ChevronRight size={12}/>}</span>)}{active.readOnly && <span className="readonly-chip"><LockKeyhole size={11}/> Solo lectura</span>}</div>}
         <div className="editor-area">
-          {active ? <Editor
+          {active ? (mobile ? <div className="mobile-code-editor">
+            <div className="mobile-editor-tools"><span>{active.name} · {active.text.split('\n').length} líneas</span><button disabled={active.readOnly} onClick={() => void saveDoc(active.path)}><Download size={15}/>{active.handle ? 'Guardar' : 'Exportar'}</button></div>
+            <textarea aria-label={'Editor: '+active.name} className="mobile-code-input" value={active.text} onChange={e => updateText(active.path,e.target.value)} readOnly={active.readOnly} autoCapitalize="off" autoCorrect="off" spellCheck={false} wrap="off"/>
+            <div className="mobile-editor-hint">{active.readOnly ? 'GitHub remoto · solo lectura' : active.handle ? 'Guardar conserva cambios en tu carpeta autorizada' : 'Exportar descarga una copia; no modifica el archivo original'}</div>
+          </div> : <Editor
             key={active.path}
             path={active.path} language={active.language} value={active.text}
             onChange={value => updateText(active.path, value || '')}
             onMount={handleEditorMount} theme="vs-dark"
             options={{ readOnly: active.readOnly, automaticLayout:true, fontSize:13.5, lineHeight:23, fontFamily:"'JetBrains Mono', 'Cascadia Code', Consolas, monospace", fontLigatures:true, minimap:{enabled:false}, scrollbar:{verticalScrollbarSize:10,horizontalScrollbarSize:10}, smoothScrolling:true, cursorSmoothCaretAnimation:'on', padding:{top:20,bottom:20}, renderWhitespace:'selection', wordWrap:'off', tabSize:2, bracketPairColorization:{enabled:true}, guides:{indentation:true,bracketPairs:true}, stickyScroll:{enabled:true} }}
-          /> :
+          />) :
             <div className="welcome">
               <div className="welcome-center"><BrandMark size="large"/><div className="welcome-eyebrow">EL ESPACIO DE DESARROLLO DE ALICELABS</div>
                 <h1>Construye con <span>claridad.</span></h1><p>Tu código, tus herramientas y tus agentes. Un espacio diseñado para trabajar, no para mostrar paneles vacíos.</p>
-                <div className="welcome-actions"><button className="primary-button" disabled={busyWorkspace} onClick={() => void openLocal()}>{busyWorkspace ? <LoaderCircle size={16} className="spin"/> : <FolderOpen size={16}/>} Abrir carpeta local</button><button className="secondary-button" onClick={() => setDialog('github')}><Github size={16}/> Explorar GitHub</button><button className="secondary-button" onClick={() => setDialog('providers')}><Bot size={16}/> Conectar mis IA</button></div>
+                <div className="welcome-actions"><button className="primary-button" disabled={busyWorkspace} onClick={() => mobile ? fileImportRef.current?.click() : void openLocal()}>{busyWorkspace ? <LoaderCircle size={16} className="spin"/> : mobile ? <Upload size={16}/> : <FolderOpen size={16}/>} {mobile ? 'Importar código' : 'Abrir carpeta local'}</button><button className="secondary-button" onClick={() => setDialog('github')}><Github size={16}/> Explorar GitHub</button><button className="secondary-button" onClick={() => setDialog('providers')}><Bot size={16}/> Conectar mis IA</button></div>
+                {mobile && <div className="mobile-welcome-tip"><Smartphone size={14}/> Instala la app desde el botón superior. Importa archivos para editarlos o abre repositorios públicos.</div>}
                 <div className="welcome-shortcuts"><span><kbd>Ctrl</kbd> + <kbd>K</kbd> Paleta de acciones</span><span><kbd>Ctrl</kbd> + <kbd>S</kbd> Guardar</span></div>
-              </div><div className="welcome-grid"/><div className="welcome-version">CORE / UNIVERSAL CONNECTIONS v0.5</div>
+              </div><div className="welcome-grid"/><div className="welcome-version">CORE / MOBILE + MODEL CATALOG v0.6</div>
             </div>}
         </div>
         {bottomOpen && <section className="bottom-panel">
           <div className="bottom-header"><button className={bottomTab==='events'?'bottom-selected':''} onClick={() => setBottomTab('events')}><Activity size={14}/> Eventos</button><button className={bottomTab==='terminal'?'bottom-selected':''} onClick={() => setBottomTab('terminal')}><SquareTerminal size={14}/> Terminal local</button><div className="bottom-fill"/><button title="Cerrar consola" onClick={() => setBottomOpen(false)}><X size={15}/></button></div>
           {bottomTab === 'events' ? <div className="event-output">{logs.map(l => <div key={l.id} className={'event-line '+l.level}><span>{l.time}</span><span className="event-level">{l.level.toUpperCase()}</span><span>{l.text}</span></div>)}</div> :
             <div className="terminal-panel">
-              {!bridgeConnected ? <div className="terminal-empty"><SquareTerminal size={23}/><strong>Consola de tu equipo</strong><p>La página web no ejecuta comandos directamente. Conecta Core Local Bridge, que solicita autorización en el terminal de tu equipo para cada comando.</p><button className="secondary-button" onClick={() => setDialog('bridge')}>Conectar Bridge <ArrowRight size={14}/></button></div> :
+              {!bridgeConnected ? <div className="terminal-empty"><SquareTerminal size={23}/><strong>Consola de tu equipo</strong><p>{mobile ? 'La terminal del teléfono no puede acceder al equipo remoto mediante localhost. El acceso remoto autenticado todavía no está implementado; usa el Bridge desde la computadora.' : 'La página web no ejecuta comandos directamente. Conecta Core Local Bridge, que solicita autorización en el terminal de tu equipo para cada comando.'}</p><button className="secondary-button" disabled={mobile} onClick={() => setDialog('bridge')}>Conectar Bridge <ArrowRight size={14}/></button></div> :
                 <><div className="terminal-meta"><span className="connected-dot"/> LOCAL · {bridgeWorkspace}<span className="terminal-right">Comandos autorizados en el equipo</span></div><div className="terminal-scroll" ref={terminalRef}>{terminalHistory.map(t => <div className="terminal-entry" key={t.id}><div className="term-command"><span>❯</span> {t.command}</div><pre>{t.output}</pre><div className={'term-exit '+(t.exitCode===0?'pass':'fail')}>exit {t.exitCode ?? 'error'}</div></div>)}{!terminalHistory.length && <div className="terminal-hint">Escribe un comando. La ejecución necesita aprobación en la ventana del Bridge.</div>}</div><form className="terminal-input-row" onSubmit={runTerminal}><span>❯</span><input value={terminalCommand} onChange={e=>setTerminalCommand(e.target.value)} placeholder="git status" disabled={terminalRunning}/><button disabled={terminalRunning || !terminalCommand.trim() || !bridgeToken}>{terminalRunning ? <LoaderCircle size={15} className="spin"/> : <Play size={15}/>}</button></form></>}
             </div>}
         </section>}
@@ -659,7 +765,7 @@ export default function App() {
           {!history.length && <div className="agent-starter"><div className="agent-star"><WandSparkles size={24}/></div><h2>Tu IA residente, a tu lado.</h2><p>{workspace ? 'Proyecto ' + workspace.name + ' preparado. Puedo guiarte, explicar el archivo abierto o proponerte una edición que revisarás.' : 'Puedo acompañarte desde abrir un proyecto hasta revisar el código, sin inventar acciones ni ejecutar comandos sin permiso.'}</p><div className="agent-suggestions"><button onClick={() => { setAgentMode('guide'); setQuestion('Guíame paso a paso para comenzar a trabajar con mi proyecto en AliceLabs Core.'); }}>Guíame en el IDE <ArrowRight size={13}/></button><button onClick={() => { setAgentMode('chat'); setQuestion('Explícame la arquitectura del archivo abierto y cómo mejorarla.'); }}>Explicar código <ArrowRight size={13}/></button><button onClick={() => { setAgentMode('edit'); setQuestion('Refactoriza este archivo para mejorar calidad y legibilidad sin cambiar su comportamiento.'); }}>Refactorizar archivo <ArrowRight size={13}/></button></div></div>}
           {history.map((m,i) => <div key={i} className={'chat-message '+m.role}><div className="chat-author">{m.role==='user'?'Tú':'CORE AGENT'}<span>{new Date(m.timestamp).toLocaleTimeString('es-EC',{hour:'2-digit',minute:'2-digit'})}</span></div><div className="chat-text">{m.content}</div></div>)}
           {agentBusy && <div className="agent-thinking"><LoaderCircle size={15} className="spin"/> Consultando {authMode==='chatgpt'?(chatGPTAccounts.find(a=>a.id===chatGPTActiveId)?.email||'ChatGPT'):(lastRoute?.profile||'modelo')}...</div>}
-          {guidance && <div className="guide-plan"><div className="guide-plan-title"><Bot size={16}/> Plan de trabajo <span>{guidance.steps.length} pasos</span></div>{guidance.steps.map((step,i) => <div className="guide-step" key={i}><div className="guide-step-number">{i+1}</div><div className="guide-step-body"><strong>{step.title}</strong><p>{step.description}</p>{step.action && <button onClick={() => runGuideStep(step.action)}>Abrir acción <ArrowRight size={12}/></button>}</div></div>)}</div>}
+          {guidance && <div className="guide-plan"><div className="guide-plan-title"><Bot size={16}/> Plan de trabajo <span>{guidance.steps.length} pasos</span></div>{guidance.steps.map((step,i) => <div className="guide-step" key={i}><div className="guide-step-number">{i+1}</div><div className="guide-step-body"><strong>{step.title}</strong><p>{step.description}</p>{step.action && <button onClick={() => runGuideStep(step.action, step.command)}>{step.action==='run_command'?'Preparar comando':'Abrir acción'} <ArrowRight size={12}/></button>}</div></div>)}</div>}
           {proposal && <div className="proposal-card"><div className="proposal-header"><CheckCircle2 size={16}/><strong>Propuesta preparada</strong></div><div className="proposal-path">{proposal.path}</div><div className="proposal-stats"><span>{proposal.original.split('\n').length} líneas actuales</span><ArrowRight size={13}/><span>{proposal.next.split('\n').length} propuestas</span></div><p>El cambio no se aplicará sin tu aprobación. Luego podrás guardarlo.</p><div className="proposal-actions"><button onClick={() => setProposal(null)} className="secondary-button">Descartar</button><button onClick={() => setDialog('diff')} className="secondary-button"><Code2 size={14}/> Revisar diff</button><button onClick={applyProposal} className="primary-button"><Check size={14}/> Aplicar al editor</button></div></div>}
         </div>
         <div className="agent-compose">
@@ -670,6 +776,13 @@ export default function App() {
       </aside></>}
     </div>
     <footer className="statusbar"><div className="status-left"><span className="status-highlight"><BrandMark/> Core</span><button onClick={() => setSection('activity')}><Activity size={12}/> {logs[0]?.level === 'error' ? 'Revisar evento' : 'Listo'}</button><span className="status-divider"/><span>{workspace?.kind === 'github' ? <Github size={12}/> : <HardDrive size={12}/>} {workspace?.name || 'Sin proyecto'}</span></div><div className="status-right">{active && <><span>{active.language}</span><span>{active.text.split('\n').length} líneas</span><span>{active.readOnly?'Lectura':'Editable'}</span></>}<button title="Mostrar terminal" onClick={()=>{setBottomOpen(true);setBottomTab('terminal');}}><SquareTerminal size={13}/></button><span>UTF-8</span></div></footer>
+    {mobile && <nav className="mobile-tabs" aria-label="Navegación móvil">
+      <button className={sidebarOpen&&section==='files'?'mobile-tab-current':''} onClick={() => {setSection('files');setSidebarOpen(true);setAgentOpen(false);}}><Folder size={19}/><span>Archivos</span></button>
+      <button className={!sidebarOpen&&!agentOpen?'mobile-tab-current':''} onClick={() => {setSidebarOpen(false);setAgentOpen(false);}}><Code2 size={19}/><span>Editor</span></button>
+      <button className={agentOpen?'mobile-tab-current':''} onClick={() => {setSidebarOpen(false);setAgentOpen(true);}}><Bot size={19}/><span>Agente</span></button>
+      <button onClick={() => setDialog('providers')}><Search size={19}/><span>Modelos</span></button>
+      <button onClick={() => {setSidebarOpen(false);setAgentOpen(false);setBottomOpen(true);setBottomTab('terminal');}}><SquareTerminal size={19}/><span>Consola</span></button>
+    </nav>}
     {toast && <div className="toast" role="status"><CircleDot size={15}/>{toast}<button onClick={()=>setToast('')}><X size={14}/></button></div>}
     {dialog && <div className="modal-backdrop" onMouseDown={e => {if(e.target===e.currentTarget)setDialog(null);}}><div className={'dialog '+(dialog==='commands'?'command-dialog':dialog==='diff'?'diff-dialog':dialog==='settings'?'settings-dialog':dialog==='chatgpt'?'chatgpt-dialog':dialog==='providers'?'ai-hub-dialog':'')} role="dialog" aria-modal="true">
       {dialog==='diff' && proposal ? <><div className="dialog-top"><div><span className="dialog-eyebrow">REVISIÓN DE CAMBIOS</span><h3>{proposal.path}</h3></div><button className="dialog-close" onClick={()=>setDialog(null)}><X size={18}/></button></div><div className="diff-body"><DiffEditor original={proposal.original} modified={proposal.next} language={languageOf(proposal.path)} theme="vs-dark" options={{ readOnly: true, automaticLayout:true, minimap:{enabled:false}, fontSize:12, renderSideBySide: true, scrollBeyondLastLine:false }} /></div><div className="dialog-actions diff-actions"><button className="secondary-button" onClick={()=>setDialog(null)}>Volver</button><button className="primary-button" onClick={()=>{applyProposal();setDialog(null);}}><Check size={14}/> Aplicar al editor</button></div></> : dialog==='commands' ? <><div className="command-input"><Search size={19}/><input autoFocus placeholder="Escribe una acción o un archivo..." value={commandFilter} onChange={e=>setCommandFilter(e.target.value)}/><kbd>ESC</kbd></div><div className="command-list">{visibleCommands.map((item,i)=><button key={i} onClick={item.action}><item.icon size={17}/><div><strong>{item.title}</strong><small>{item.detail}</small></div><ArrowRight size={14}/></button>)}</div><div className="command-footer"><Keyboard size={13}/> Acciones y archivos del proyecto</div></>
@@ -714,6 +827,10 @@ export default function App() {
           onApi={(provider) => {setDraftProvider(provider);setAuthMode('api');setDialog('settings');}}
           onClose={() => setDialog(null)}
           onNotify={notify}
+          onLaunch={launchOfficialCLI}
+          bridgeReady={bridgeConnected}
+          bridgeTools={bridgeTools}
+          launchingTool={launchingTool}
         />}
         {dialog==='chatgpt' && <ChatGPTPanel
           pairToken={chatGPTPair} setPairToken={setChatGPTPair}
