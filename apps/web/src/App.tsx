@@ -12,8 +12,8 @@ import {
   ShieldCheck, Sparkles, SquareTerminal, WandSparkles, Wifi, X
 } from 'lucide-react';
 import {
-  chooseLocalWorkspace, flatten, languageOf, loadPublicRepository,
-  makeFile, persistDocument, readDocument, scanFolder
+  chooseLocalWorkspace, flatten, languageOf, loadGithubRepository,
+  makeFile, persistDocument, readDocument, scanFolder, stageGithubFile, unstageGithubFile
 } from './workspace';
 import type { FileNode, OpenDocument, Workspace } from './workspace';
 import { discoverModels, pingWorker, requestAgent } from './agent';
@@ -21,6 +21,7 @@ import type { ChatMessage, Provider, Connection, Guidance, GuideStep, AgentRespo
 import { chooseRoute } from './routing';
 import {runAgentEditTeam} from './agentTeam';
 import {grantedProfiles} from './ownerGrants';
+import {githubFileCommit,githubFileCreate,githubProposePullRequest} from './githubWorkspace';
 import type { Priority } from './routing';
 import ChatGPTPanel from './ChatGPTPanel';
 import AIConnectionsHub from './AIConnectionsHub';
@@ -107,6 +108,11 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
   const [bottomTab, setBottomTab] = useState<'events' | 'terminal'>('events');
   const [dialog, setDialog] = useState<Dialog>(() => new URLSearchParams(window.location.search).get('open') === 'models' ? 'providers' : null);
   const [githubURL, setGithubURL] = useState('');
+  const [githubTokenInput,setGithubTokenInput]=useState('');
+  const [githubToken,setGithubToken]=useState('');
+  const [githubCommitMessage,setGithubCommitMessage]=useState('');
+  const [githubPullRequestUrl,setGithubPullRequestUrl]=useState('');
+  const [githubPullRequestBusy,setGithubPullRequestBusy]=useState(false);
   const [newPath, setNewPath] = useState('');
   const [busyWorkspace, setBusyWorkspace] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([{ id: 1, time: stamp(), level: 'info', text: 'Core iniciado. Abre una carpeta o repositorio para comenzar.' }]);
@@ -195,13 +201,13 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
       if (cancelled) return;
       if (data) {
         setWorkspace(data.workspace);
-        setDocs(data.docs || []);
+        setDocs((data.docs||[]).map(doc=>data.workspace?.kind==='github'?{...doc,readOnly:true}:doc));
         setActivePath(data.activePath || null);
         setQuestion(data.question || '');
         setHistory(data.history || []);
         setGuidance(data.guidance || null);
         setExpanded(new Set(data.expanded || []));
-        importedContents.current = new Map((data.docs || []).map(doc => [doc.path, doc.text]));
+        importedContents.current = new Map((data.docs || []).filter(doc => data.workspace?.kind!=='github'||!doc.sha).map(doc => [doc.path, doc.text]));
       }
     }).catch(() => {
       if (!cancelled) log('No se pudo recuperar el estado guardado de este proyecto', 'error');
@@ -274,6 +280,9 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
 
   function resetWorkspace(next: Workspace) {
     if (dirty.length && !window.confirm('Hay cambios sin guardar. ¿Cambiar de proyecto y descartarlos?')) return false;
+    setGithubPullRequestUrl('');
+    importedContents.current.clear();
+    if(next.kind!=='github')setGithubToken('');
     setWorkspace(next); setDocs([]); setActivePath(null); setExpanded(new Set(next.nodes.filter(n => n.kind === 'directory').slice(0, 7).map(n => n.path)));
     setHistory([]); setGuidance(null); setProposal(null); setSection('files'); setDialog(null);
     log('Proyecto abierto: ' + next.name + (next.kind === 'github' ? ' · GitHub lectura' : ' · Carpeta local'));
@@ -332,27 +341,50 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
   }
   async function openGithub(e?: FormEvent) {
     e?.preventDefault(); setBusyWorkspace(true);
-    try { resetWorkspace(await loadPublicRepository(githubURL)); }
+    try {
+      const token=githubTokenInput.trim();
+      const repo=await loadGithubRepository(githubURL,token);
+      const sameRepo=workspace?.kind==='github'&&workspace.github?.owner.toLowerCase()===repo.github?.owner.toLowerCase()&&
+        workspace.github?.repo.toLowerCase()===repo.github?.repo.toLowerCase()&&workspace.github?.branch===repo.github?.branch;
+      if(sameRepo){
+        setWorkspace(prev=>prev?.github?{...prev,github:{...prev.github,writable:repo.github?.writable,private:repo.github?.private}}:prev);
+        setDocs(prev=>prev.map(doc=>({...doc,readOnly:!token||!repo.github?.writable})));
+        setGithubToken(token);
+        setDialog(null);
+        notify(repo.github?.writable?'GitHub reconectado conservando tus borradores.':'GitHub abierto sin permiso de escritura.');
+      }else if(resetWorkspace(repo)){
+        setGithubToken(token);
+        setGithubTokenInput('');
+        notify(repo.github?.writable?'GitHub conectado con permiso de escritura.':'Repositorio abierto en lectura.');
+      }
+    }
     catch (error) { notify(error instanceof Error ? error.message : 'No se pudo abrir GitHub', true); }
-    finally { setBusyWorkspace(false); }
+    finally { setBusyWorkspace(false); setGithubTokenInput(''); }
   }
   const openNode = useCallback(async (node: FileNode) => {
     if (!workspace || node.kind !== 'file') return;
     if (docs.some(d => d.path === node.path)) { setActivePath(node.path); if (mobile) setSidebarOpen(false); return; }
     try {
-      const document = workspace.kind === 'local' && !workspace.root && !node.handle ?
-        { path: node.path, name: node.name, text: importedContents.current.get(node.path) || '', savedText: importedContents.current.get(node.path) || '', readOnly: false, language: languageOf(node.name) } as OpenDocument :
-        await readDocument(node, workspace);
+      const staged=workspace.kind==='github'&&importedContents.current.has(node.path);
+      const stagedText=importedContents.current.get(node.path)||'';
+      const document:OpenDocument=staged ? {path:node.path,name:node.name,text:stagedText,
+        savedText:'Archivo nuevo sin publicar',language:languageOf(node.name),
+        readOnly:!githubToken||!workspace.github?.writable} :
+        workspace.kind==='local'&&!workspace.root&&!node.handle ?
+          {path:node.path,name:node.name,text:stagedText,savedText:stagedText,
+            readOnly:false,language:languageOf(node.name)} :
+          await readDocument(node,workspace,workspace.kind==='github'?githubToken:'');
       setDocs(prev => prev.some(d => d.path === document.path) ? prev : [...prev, document]);
       setActivePath(document.path);
       if (mobile) setSidebarOpen(false);
       log('Archivo abierto: ' + node.path);
     } catch (error) { notify(error instanceof Error ? error.message : 'Error al leer archivo', true); }
-  }, [workspace, docs, log, notify, mobile]);
+  }, [workspace, docs, log, notify, mobile, githubToken]);
   function toggleFolder(path: string) {
     setExpanded(prev => { const next = new Set(prev); if (next.has(path)) next.delete(path); else next.add(path); return next; });
   }
   function updateText(path: string, next: string) {
+    if(workspace?.kind==='github'&&importedContents.current.has(path))importedContents.current.set(path,next);
     setDocs(prev => prev.map(d => d.path === path ? { ...d, text: next } : d));
   }
   async function saveDoc(path: string) {
@@ -360,6 +392,21 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
     if (!doc) return;
     if (doc.readOnly) return notify('Repositorio remoto en modo lectura. Abre una carpeta local para guardar.', true);
     try {
+      if(workspace?.kind==='github'&&workspace.github){
+        if(!githubToken)throw new Error('Falta autorización GitHub. Conecta el token del propietario.');
+        const message=(githubCommitMessage.trim()||'Core: actualizar '+doc.path).slice(0,180);
+        if(!window.confirm('¿Publicar un COMMIT en '+workspace.name+' / '+workspace.github.branch+
+          ' para '+doc.path+'?\n\n'+message+'\n\nGitHub rechazará cambios ajenos.'))return;
+        const result=doc.sha
+          ? await githubFileCommit({repo:{...workspace.github,private:workspace.github.private===true},
+              path:doc.path,text:doc.text,sha:doc.sha,token:githubToken,message})
+          : await githubFileCreate({repo:{...workspace.github,private:workspace.github.private===true},
+              path:doc.path,text:doc.text,token:githubToken,message});
+        importedContents.current.delete(doc.path);
+        setDocs(prev=>prev.map(d=>d.path===doc.path&&d.text===doc.text?{...d,savedText:d.text,sha:result.sha}:d));
+        notify('Commit publicado: '+result.commitSha.slice(0,10));
+        return;
+      }
       if (!doc.handle) {
         exportImportedDoc(doc);
       } else await persistDocument(doc);
@@ -367,8 +414,30 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
       notify((doc.handle ? 'Guardado: ' : 'Exportación solicitada: ') + doc.path);
     } catch (error) { notify(error instanceof Error ? error.message : 'No se pudo guardar', true); }
   }
+  async function openGithubPullRequest(path:string){
+    const doc=docs.find(d=>d.path===path);
+    if(!doc||!workspace?.github||!githubToken||!workspace.github.writable||doc.readOnly)return;
+    if(doc.text===doc.savedText)return notify('Edita un archivo antes de proponer cambios.',true);
+    const title=(githubCommitMessage.trim()||'Core: cambios en '+path).slice(0,180);
+    if(!window.confirm('¿Crear una RAMA NUEVA y un Pull Request para revisar '+path+' en '+workspace.name+'?\n\n'+title+
+      '\n\nNo se modifica la rama principal. GitHub puede rechazar el PR sin los permisos correspondientes.'))return;
+    setGithubPullRequestBusy(true);
+    try{
+      const created=await githubProposePullRequest({
+        repo:{...workspace.github,private:workspace.github.private===true},
+        path,text:doc.text,sha:doc.sha,token:githubToken,title,message:title
+      });
+      setGithubPullRequestUrl(created.url);
+      notify('Pull Request creado en GitHub, listo para revisión.');
+    }catch(error){notify(error instanceof Error?error.message:'Error al crear Pull Request',true);}
+    finally{setGithubPullRequestBusy(false);}
+  }
   async function saveAll() {
-    const changes = docs.filter(d => d.text !== d.savedText && !d.readOnly);
+    const changes=docs.filter(d=>d.text!==d.savedText&&!d.readOnly);
+    if(workspace?.kind==='github'){
+      for(const file of changes)await saveDoc(file.path);
+      return;
+    }
     for (const doc of changes) {
       try { if (doc.handle) await persistDocument(doc); else exportImportedDoc(doc); setDocs(prev => prev.map(d => d.path === doc.path && d.text === doc.text ? { ...d, savedText: doc.text } : d)); }
       catch (error) { notify('Error guardando ' + doc.path + ': ' + String(error), true); return; }
@@ -378,6 +447,10 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
   function closeDoc(path: string) {
     const doc = docs.find(d => d.path === path);
     if (doc && doc.text !== doc.savedText && !window.confirm('¿Cerrar ' + doc.name + ' sin guardar cambios?')) return;
+    if(workspace?.kind==='github'&&doc&&!doc.sha&&importedContents.current.has(path)){
+      importedContents.current.delete(path);
+      setWorkspace(prev=>prev?unstageGithubFile(prev,path):prev);
+    }
     const rest = docs.filter(d => d.path !== path);
     setDocs(rest);
     if (activePath === path) setActivePath(rest[rest.length - 1]?.path || null);
@@ -386,6 +459,20 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
     e.preventDefault();
     if (!workspace || !newPath.trim()) return;
     try {
+      if(workspace.kind==='github'){
+        if(!githubToken||!workspace.github?.writable)throw new Error('Conecta GitHub con permiso Contents: write para crear archivos.');
+        const staged=stageGithubFile(workspace,newPath.trim());
+        const initial:OpenDocument={path:staged.node.path,name:staged.node.name,text:'',
+          savedText:'Archivo nuevo sin publicar',language:languageOf(staged.node.name),readOnly:false};
+        importedContents.current.set(initial.path,'');
+        setWorkspace(staged.workspace);
+        setDocs(prev=>[...prev,initial]);
+        setActivePath(initial.path);
+        setExpanded(prev=>new Set([...prev,...initial.path.split('/').slice(0,-1).map((_,i,arr)=>arr.slice(0,i+1).join('/'))]));
+        setDialog(null);setNewPath('');
+        notify('Archivo preparado en memoria. Publícalo con Ctrl+S tras aprobar el commit.');
+        return;
+      }
       const node = await makeFile(workspace, newPath);
       const nodes = await scanFolder(workspace.root!);
       setWorkspace({ ...workspace, nodes });
@@ -399,9 +486,16 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
     if (!workspace) return;
     if (workspace.kind === 'local' && !workspace.root) return notify('Los archivos importados solo se actualizan al volver a importarlos', true);
     try {
-      const next = workspace.kind === 'local' ? { ...workspace, nodes: await scanFolder(workspace.root!) } :
-        await loadPublicRepository('https://github.com/' + workspace.github!.owner + '/' + workspace.github!.repo);
-      setWorkspace(next); notify('Explorador actualizado');
+      let next = workspace.kind === 'local' ? { ...workspace, nodes: await scanFolder(workspace.root!) } :
+        await loadGithubRepository('https://github.com/'+workspace.github!.owner+'/'+workspace.github!.repo,githubToken);
+      if(next.kind==='github'&&githubToken&&next.github?.writable){
+        for(const draft of importedContents.current.keys()){
+          if(docs.some(d=>d.path===draft&&!d.sha)){
+            try{next=stageGithubFile(next,draft).workspace;}catch{/* Remote file now exists: GitHub will reject duplicate commit */}
+          }
+        }
+      }
+      setWorkspace(next);notify('Explorador actualizado');
     } catch (error) { notify(String(error), true); }
   }
   function handleEditorMount(editor: monaco.editor.IStandaloneCodeEditor, editorAPI: typeof monaco) {
@@ -862,6 +956,13 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
         {section === 'files' && <div className="sidebar-body">
           {workspace ? <>
             <div className="workspace-head"><span className="workspace-head-title">{workspace.name.toUpperCase()}</span><span className="workspace-source">{workspace.kind === 'github' ? <Github size={12}/> : <HardDrive size={12}/>}</span></div>
+            {workspace.kind==='github'&&<div className="github-auth-status">
+              <span>{workspace.github?.writable&&githubToken?'GitHub conectado · commits':'GitHub solo lectura'}</span>
+              {githubToken&&<button className="thin-action" onClick={()=>{setGithubToken('');setWorkspace(w=>w?.github?{...w,github:{...w.github,writable:false}}:w);setDocs(current=>current.map(d=>({...d,readOnly:true})));notify('Acceso GitHub desconectado');}}>Desconectar</button>}
+              {!githubToken&&<button className="thin-action" onClick={()=>{setGithubURL('https://github.com/'+workspace.github?.owner+'/'+workspace.github?.repo);setDialog('github');}}>Conectar escritura</button>}
+              {githubToken&&<input className="dialog-text-input" value={githubCommitMessage} onChange={e=>setGithubCommitMessage(e.target.value)} maxLength={180} placeholder="Mensaje del commit (opcional)"/>}
+              {githubPullRequestUrl&&<a className="github-pr-link" href={githubPullRequestUrl} target="_blank" rel="noopener noreferrer">Abrir Pull Request publicado</a>}
+            </div>}
             <FileTree nodes={workspace.nodes} expanded={expanded} onToggle={toggleFolder} onOpen={openNode} current={activePath}/>
             {workspace.nodes.length === 0 && <div className="empty-sidebar">Esta carpeta no contiene archivos visibles.</div>}
           </> : <div className="sidebar-placeholder"><FolderPlus size={26}/><strong>Sin proyecto</strong><span>Abre una carpeta local o explora un repositorio GitHub.</span><button className="thin-action" onClick={() => mobile ? fileImportRef.current?.click() : void openLocal()}>{mobile ? 'Importar código' : 'Abrir carpeta'} <ArrowRight size={13}/></button></div>}
@@ -893,6 +994,8 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
             {!docs.length && <div className="no-tabs"><Braces size={15}/> Editor</div>}
           </div>
           <div className="tabstrip-actions">
+            {workspace?.kind==='github'&&workspace.github?.writable&&<button title="Crear rama y Pull Request con los cambios del archivo" onClick={()=>{if(activePath)void openGithubPullRequest(activePath);}} disabled={githubPullRequestBusy||!active||active.readOnly||active.text===active.savedText}><Github size={15}/></button>}
+            {workspace?.kind==='github'&&workspace.github?.writable&&<button title="Publicar commit del archivo actual" onClick={()=>{if(activePath)void saveDoc(activePath);}} disabled={!active||active.readOnly||active.text===active.savedText}><GitBranch size={15}/></button>}
             <button title="Guardar archivo" onClick={() => { if (activePath) void saveDoc(activePath); }} disabled={!active || active.readOnly || active.text === active.savedText}><Save size={15}/></button>
             <button title="Ocultar o mostrar consola" onClick={() => setBottomOpen(v => !v)}>{bottomOpen ? <PanelBottomClose size={16}/> : <PanelBottomOpen size={16}/>}</button>
           </div>
@@ -900,9 +1003,9 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
         {active && <div className="breadcrumbs"><span>{workspace?.name}</span><ChevronRight size={12}/>{active.path.split('/').map((part,i,arr) => <span className={i === arr.length-1?'breadcrumb-current':''} key={i}>{part}{i < arr.length - 1 && <ChevronRight size={12}/>}</span>)}{active.readOnly && <span className="readonly-chip"><LockKeyhole size={11}/> Solo lectura</span>}</div>}
         <div className="editor-area">
           {active ? (mobile ? <div className="mobile-code-editor">
-            <div className="mobile-editor-tools"><span>{active.name} · {active.text.split('\n').length} líneas</span><button disabled={active.readOnly} onClick={() => void saveDoc(active.path)}><Download size={15}/>{active.handle ? 'Guardar' : 'Exportar'}</button></div>
+            <div className="mobile-editor-tools"><span>{active.name} · {active.text.split('\n').length} líneas</span><button disabled={active.readOnly} onClick={() => void saveDoc(active.path)}><Download size={15}/>{workspace?.kind==='github'?'Publicar':active.handle ? 'Guardar' : 'Exportar'}</button></div>
             <textarea aria-label={'Editor: '+active.name} className="mobile-code-input" value={active.text} onChange={e => updateText(active.path,e.target.value)} readOnly={active.readOnly} autoCapitalize="off" autoCorrect="off" spellCheck={false} wrap="off"/>
-            <div className="mobile-editor-hint">{active.readOnly ? 'GitHub remoto · solo lectura' : active.handle ? 'Guardar conserva cambios en tu carpeta autorizada' : 'Exportar descarga una copia; no modifica el archivo original'}</div>
+            <div className="mobile-editor-hint">{active.readOnly ? "GitHub remoto en modo lectura" : workspace?.kind==="github" ? "Publicar crea un commit GitHub después de confirmar" : active.handle ? "Guardar actualiza la carpeta autorizada" : "Exportar descarga una copia; no modifica el original"}</div>
           </div> : <Editor
             key={active.path}
             path={active.path} language={active.language} value={active.text}
@@ -961,10 +1064,19 @@ export default function App({ projectId, activeProject, onProjectTitle, onDirtyC
     </nav>}
     {toast && <div className="toast" role="status"><CircleDot size={15}/>{toast}<button onClick={()=>setToast('')}><X size={14}/></button></div>}
     {dialog && <div className="modal-backdrop" onMouseDown={e => {if(e.target===e.currentTarget)setDialog(null);}}><div className={'dialog '+(dialog==='commands'?'command-dialog':dialog==='diff'?'diff-dialog':dialog==='settings'?'settings-dialog':dialog==='chatgpt'?'chatgpt-dialog':dialog==='providers'?'ai-hub-dialog':dialog==='cloud'?'cloud-dialog':'')} role="dialog" aria-modal="true">
-      {dialog==='diff' && proposal ? <><div className="dialog-top"><div><span className="dialog-eyebrow">REVISIÓN DE CAMBIOS</span><h3>{proposal.path}</h3></div><button className="dialog-close" onClick={()=>setDialog(null)}><X size={18}/></button></div><div className="diff-body"><DiffEditor original={proposal.original} modified={proposal.next} language={languageOf(proposal.path)} theme="vs-dark" options={{ readOnly: true, automaticLayout:true, minimap:{enabled:false}, fontSize:12, renderSideBySide: true, scrollBeyondLastLine:false }} /></div><div className="dialog-actions diff-actions"><button className="secondary-button" onClick={()=>setDialog(null)}>Volver</button><button className="primary-button" onClick={()=>{applyProposal();setDialog(null);}}><Check size={14}/> Aplicar al editor</button></div></> : dialog==='commands' ? <><div className="command-input"><Search size={19}/><input autoFocus placeholder="Escribe una acción o un archivo..." value={commandFilter} onChange={e=>setCommandFilter(e.target.value)}/><kbd>ESC</kbd></div><div className="command-list">{visibleCommands.map((item,i)=><button key={i} onClick={item.action}><item.icon size={17}/><div><strong>{item.title}</strong><small>{item.detail}</small></div><ArrowRight size={14}/></button>)}</div><div className="command-footer"><Keyboard size={13}/> Acciones y archivos del proyecto</div></>
+      {dialog==='diff' && proposal ? <><div className="dialog-top"><div><span className="dialog-eyebrow">REVISIÓN DE CAMBIOS</span><h3>{proposal.path}</h3></div><button className="dialog-close" onClick={()=>setDialog(null)}><X size={18}/></button></div><div className="diff-body"><DiffEditor original={proposal.original} modified={proposal.next} language={languageOf(proposal.path)} theme="vs-dark" options={{ readOnly: true, automaticLayout:true, minimap:{enabled:false}, fontSize:12, renderSideBySide: true, scrollBeyondLastLine:false }} /></div><div className="dialog-actions diff-actions"><button className="secondary-button" onClick={()=>setDialog(null)}>Volver</button><button className="primary-button" disabled={proposal.teamApproved===false} onClick={()=>{if(proposal.teamApproved!==false){applyProposal();setDialog(null);}}}><Check size={14}/> Aplicar al editor</button></div></> : dialog==='commands' ? <><div className="command-input"><Search size={19}/><input autoFocus placeholder="Escribe una acción o un archivo..." value={commandFilter} onChange={e=>setCommandFilter(e.target.value)}/><kbd>ESC</kbd></div><div className="command-list">{visibleCommands.map((item,i)=><button key={i} onClick={item.action}><item.icon size={17}/><div><strong>{item.title}</strong><small>{item.detail}</small></div><ArrowRight size={14}/></button>)}</div><div className="command-footer"><Keyboard size={13}/> Acciones y archivos del proyecto</div></>
       : <><div className="dialog-top"><div><span className="dialog-eyebrow">ALICELABS CORE</span><h3>{dialog==='github'?'Abrir repositorio GitHub':dialog==='new'?'Nuevo archivo':dialog==='settings'?'Cuentas API y modelos':dialog==='chatgpt'?'Conectar cuentas ChatGPT':dialog==='providers'?'Proveedores y cuentas de IA':dialog==='cloud'?'Nube privada del proyecto':'Conectar terminal local'}</h3></div><button className="dialog-close" onClick={()=>setDialog(null)}><X size={18}/></button></div>
-        {dialog==='github' && <form onSubmit={openGithub} className="dialog-content"><p>Explora cualquier repositorio público de GitHub, con árbol de archivos y editor en modo lectura. Para editar y guardar, abre una carpeta local.</p><label>URL del repositorio</label><div className="input-with-icon"><Github size={16}/><input autoFocus placeholder="https://github.com/usuario/repositorio" value={githubURL} onChange={e=>setGithubURL(e.target.value)}/></div><div className="dialog-actions"><button type="button" className="secondary-button" onClick={()=>setDialog(null)}>Cancelar</button><button type="submit" className="primary-button" disabled={busyWorkspace||!githubURL.trim()}>{busyWorkspace?<LoaderCircle size={15} className="spin"/>:<ArrowRight size={15}/>} Abrir repositorio</button></div></form>}
-        {dialog==='new' && <form onSubmit={createNew} className="dialog-content"><p>Crea un archivo en la carpeta local. Puedes indicar subcarpetas con /.</p><label>Nombre o ruta</label><div className="input-with-icon"><FilePlus2 size={16}/><input autoFocus placeholder="src/components/Nuevo.tsx" value={newPath} onChange={e=>setNewPath(e.target.value)}/></div><div className="dialog-actions"><button className="secondary-button" type="button" onClick={()=>setDialog(null)}>Cancelar</button><button className="primary-button" disabled={!newPath.trim()}>Crear archivo</button></div></form>}
+        {dialog==='github' && <form onSubmit={openGithub} className="dialog-content">
+          <p>Abre repositorios públicos en lectura o conecta tu cuenta GitHub con un token restringido. No se guarda ningún token en disco, IndexedDB ni en el repositorio.</p>
+          <label>URL del repositorio</label>
+          <div className="input-with-icon"><Github size={16}/><input autoFocus placeholder="https://github.com/usuario/repositorio" value={githubURL} onChange={e=>setGithubURL(e.target.value)}/></div>
+          <label>Token de acceso restringido GitHub (opcional)</label>
+          <div className="input-with-icon"><LockKeyhole size={16}/><input type="password" autoComplete="off" placeholder="github_pat_..." value={githubTokenInput} onChange={e=>setGithubTokenInput(e.target.value)}/></div>
+          <p>Para publicar, autoriza Contents: Read and write solo para el repositorio elegido. No pegues cookies ni contraseñas. Cada commit necesita confirmación y usa el SHA de versión original.</p>
+          <div className="dialog-actions"><button type="button" className="secondary-button" onClick={()=>setDialog(null)}>Cancelar</button>
+            <button type="submit" className="primary-button" disabled={busyWorkspace||!githubURL.trim()}>{busyWorkspace?<LoaderCircle size={15} className="spin"/>:<ArrowRight size={15}/>} Abrir repositorio</button>
+          </div></form>}
+        {dialog==='new' && <form onSubmit={createNew} className="dialog-content"><p>Crea un archivo en la carpeta local o prepara uno en GitHub para publicarlo como commit después de revisarlo. Puedes indicar subcarpetas con /.</p><label>Nombre o ruta</label><div className="input-with-icon"><FilePlus2 size={16}/><input autoFocus placeholder="src/components/Nuevo.tsx" value={newPath} onChange={e=>setNewPath(e.target.value)}/></div><div className="dialog-actions"><button className="secondary-button" type="button" onClick={()=>setDialog(null)}>Cancelar</button><button className="primary-button" disabled={!newPath.trim()}>Crear archivo</button></div></form>}
         {dialog==='settings' && <div className="dialog-content connection-manager">
           <button className="secondary-button" onClick={() => setDialog('providers')}><Layers3 size={15}/> Volver al centro de proveedores</button>
           <button className="siwc-link" onClick={() => {setAuthMode('chatgpt');setDialog('chatgpt');}}><Bot size={17}/><span><strong>Iniciar sesión con ChatGPT</strong><small>Con correo, sin clave API · conexiones múltiples</small></span><ArrowRight size={16}/></button>
