@@ -53,3 +53,22 @@ pnpm --filter @core/desktop tauri build
 
 ## License
 MIT. See [LICENSE](LICENSE).
+
+
+## AliceLabs Core Web — Cloudflare Pages
+
+**Web IDE:** https://alicelabs-core.pages.dev  
+**Agent Worker (health):** https://alicelabs-core-agent.eddyflores100.workers.dev/api/health
+
+El IDE web usa `apps/web` (React, Monaco, File System Access) y el agente de IA usa `apps/api` (Cloudflare Worker con credenciales BYOK). Cloudflare Pages se integra con la rama `main` del repositorio, con directorio raíz `apps/web`, build `npm run build` y salida `dist`.
+
+```bash
+pnpm install
+pnpm web:dev
+pnpm web:build
+pnpm --filter @core/agent-worker test
+# En el equipo autorizado, para terminal local opcional:
+node tools/local-bridge/server.mjs
+```
+
+**Importante:** las carpetas locales se abren y guardan con permiso del navegador; GitHub público actualmente es de solo lectura. La IA puede proponer cambios en el archivo activo, pero no aplicarlos ni guardarlos sin aprobación. La terminal solo funciona con el Bridge local, token temporal y aprobación manual de cada comando. No se ejecuta shell desde Workers. Ver [guía web](apps/web/README.md).
