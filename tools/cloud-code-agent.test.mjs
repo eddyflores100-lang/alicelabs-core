@@ -344,3 +344,57 @@ test('Line-sliced edits preserve original BOM and CRLF newlines',async()=>{
     assert.equal(next.split('\r\n').length,original.split('\r\n').length);
   }finally{await rm(root,{recursive:true,force:true});}
 });
+test('Automatic scoper discovers files, then planner/coder/reviewer produce a bounded PR',async()=>{
+  const root=await fixture();
+  try{
+    const paths=['src/a.ts','src/a.test.ts'];
+    const outputs=[
+      JSON.stringify({files:paths}),
+      'Plan: update the constant and its corresponding test',
+      JSON.stringify({changes:[
+        {path:paths[0],content:'export const n=42'},
+        {path:paths[1],content:'expect(n).toBe(42)'}
+      ]}),
+      JSON.stringify({approved:true,issues:[]})
+    ];
+    const operations=[];
+    const result=await runCloudCoder({
+      root,goal:'Update the constant and its associated test',paths:'auto',
+      provider:'openai',model:'gpt-4.1-mini',apiKey:key,githubToken:token,
+      fetcher:mockProvider(outputs),
+      gitCommand:(_cwd,args)=>{
+        operations.push(args[0]);
+        if(args[0]==='status')return '';
+        if(args[0]==='ls-files')return paths.join('\0')+'\0';
+        return 'ok';
+      },
+      ghCommand:()=> 'https://github.com/owner/repo/pull/60'
+    });
+    assert.equal(result.reviewApproved,true);
+    assert.equal(result.modelCalls,4);
+    assert.deepEqual(result.selectedFiles,paths);
+    assert.equal(await readFile(path.join(root,'src/a.ts'),'utf8'),'export const n=42');
+    assert.deepEqual(operations,['status','ls-files','status','switch','add','-c','push']);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+test('Automatic scoper cannot select a file absent from Git tracked candidates',async()=>{
+  const root=await fixture();
+  try{
+    let calls=0;
+    const operations=[];
+    await assert.rejects(runCloudCoder({
+      root,goal:'Edit file outside tracked repository',paths:'auto',
+      provider:'openai',model:'gpt-4.1-mini',apiKey:key,githubToken:token,
+      fetcher:mockProvider([
+        JSON.stringify({files:['src/a.ts','src/private.ts']})
+      ]),
+      gitCommand:(_cwd,args)=>{
+        operations.push(args[0]);
+        return args[0]==='ls-files'?'src/a.ts\0src/a.test.ts\0':'';
+      },
+      ghCommand:()=>{throw Error('Must not create a PR');}
+    }),/rastreado|fuera/);
+    assert.deepEqual(operations,['status','ls-files']);
+    assert.equal(await readFile(path.join(root,'src/a.ts'),'utf8'),'export const n=1');
+  }finally{await rm(root,{recursive:true,force:true});}
+});

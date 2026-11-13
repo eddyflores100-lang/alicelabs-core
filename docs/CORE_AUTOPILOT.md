@@ -12,7 +12,7 @@ La programación queda desactivada por defecto. El workflow necesita dos variabl
 2. Cuenta los Issues reservados y actualizados desde las 00:00 UTC. Admite de una a tres tareas nuevas al día, con valor predeterminado de dos. Cuando el límite se alcanza no llama a la IA.
 3. Inspecciona Issues abiertos con etiqueta exacta core-agent:approved. Solo permite tareas de OWNER, MEMBER o COLLABORATOR del repositorio. El cuerpo debe contener JSON con goal (5–1600 caracteres) y files (2–6 rutas existentes bajo src/ o apps/{web,api,remote}/src/, separadas por comas).
 4. Reserva una tarea válida con core-agent:claimed. La concurrencia de GitHub Actions impide dos ejecutores simultáneos en el repositorio.
-5. Ejecuta Core Cloud Coder con los roles planificador, programador y revisor, máximo cinco solicitudes al proveedor y límites de archivos. Solo crea un PR si el revisor aprueba.
+5. Ejecuta Core Cloud Coder con los roles planificador, programador y revisor, hasta seis solicitudes al proveedor en modo AUTO y límites de archivos. Solo crea un PR si el revisor aprueba.
 6. Marca el Issue con core-agent:review cuando crea el PR o con core-agent:failed al fallar. No reintenta automáticamente tareas fallidas. La fusión es siempre humana.
 
 ## Utilizarlo desde la web o Android
@@ -72,3 +72,21 @@ Core Autopilot se instala por repositorio desde Core Web o Android, en la secci�
 **Privacidad y costes:** cada repositorio conserva sus propios tokens, secretos, Issues y PR. No se copian al repositorio de Core. El uso de GitHub Actions y del proveedor de IA puede generar consumo. El límite diario controla cantidad de tareas, no dólares. No se ejecuta inferencia sin clave configurada y dos variables de activación.
 
 **Limitaciones:** la escritura directa del archivo de workflow puede estar bloqueada por las reglas de protección de rama de GitHub. La aplicación informa ese bloqueo; no intenta eludirlo. La instalación puede requerir permisos Workflows: Write adicionales.
+
+## Selección automática de archivos (AUTO)
+
+El propietario puede indicar la palabra auto en el campo de archivos de una tarea de GitHub Actions, o pulsar la opción de selección automática en Core Web / Android. El Issue debe estar autorizado por OWNER/MEMBER/COLLABORATOR como cualquier otra tarea.
+
+Un cuarto rol, scoper, inspecciona de forma de solo lectura el índice de archivos rastreados por Git dentro de src/ y apps/{web,api,remote}/src. Excluye rutas ocultas, symlinks, archivos binarios y datos externos al código. Envía al proveedor únicamente rutas, tamaños, números de líneas y un número acotado de declaraciones de funciones/clases, NO todo el contenido de los archivos.
+
+El modelo propone entre dos y seis archivos del catálogo validado. Para archivos que superan 12 KB debe elegir además un rango de hasta 200 líneas. Las rutas sugeridas se verifican otra vez en el servidor, el contenido se lee de forma segura y los roles existentes planificador, programador y revisor generan el PR.
+
+Esta función amplía la autorización de archivos a todos los módulos elegibles del catálogo acotado: no la actives si deseas escoger cada archivo manualmente. Cada tarea AUTO puede hacer hasta seis llamadas al modelo y generar consumo. La fusión del PR sigue siendo manual y GitHub conserva las protecciones de rama.
+
+## Descubrimiento autónomo por objetivo
+
+Indica files=auto en un Issue autorizado o selecciona el botón AUTO de Core Web/Android. El rol SCOPER consulta únicamente archivos rastreados por Git en los directorios de código permitidos y construye un índice de rutas, nombres de símbolos, números de línea y tamaños. Nunca envía al proveedor valores de constantes, inicializadores, claves privadas ni contenido completo durante el descubrimiento.
+
+El scoper puede seleccionar de 2 a 6 archivos que realmente existen en el índice. Para archivos grandes debe devolver rangos de 200 líneas o menos. El servidor valida estrictamente el resultado, rechaza rutas privadas, ocultas, symlinks, binarias y no rastreadas, y cancela ante modificaciones concurrentes. Solo después de validar se ejecutan planificador, programador y revisor, con PR para aprobación humana.
+
+El índice se limita a 450 candidatos locales y 38 KB de metadatos enviados, priorizando nombres relacionados con el objetivo. El modo AUTO añade una llamada API respecto al flujo de selección manual; las tareas pueden consumir hasta seis llamadas por objetivo. Se mantiene el máximo de tres tareas aprobadas por día, y ninguna se activa por defecto.

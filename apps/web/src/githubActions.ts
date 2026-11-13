@@ -1,4 +1,5 @@
 import type {GithubRepoInfo,GithubFetch} from './githubWorkspace';
+import {validateAutopilotGoal} from './githubAutopilot.ts';
 
 export type GithubWorkflow = {
   id:number; name:string; path:string; state:string;
@@ -75,18 +76,10 @@ export function isCloudCoderWorkflow(workflow:GithubWorkflow|null):boolean{
 export async function dispatchGithubCloudCoder(repo:GithubRepoInfo,token:string,id:number,
   goal:string,files:string,request:GithubFetch=fetch):Promise<GithubDispatchResult>{
   workflowId(id);
-  const task=goal.trim();
-  if(task.length<5||task.length>1600)throw new Error('El objetivo debe tener entre 5 y 1600 caracteres.');
-  if(files.length>700)throw new Error('Selección de archivos demasiado grande.');
-  const paths=files.split(',').map(x=>x.trim()).filter(Boolean);
-  if(paths.length<2||paths.length>6||paths.some(x=>!x.startsWith('src/')||
-     x.startsWith('/')||x.includes('..')||x.includes('\\')||
-     !/\.(ts|tsx|js|jsx|css|md|json|py|go|rs|html)$/i.test(x))||
-     new Set(paths).size!==paths.length)
-    throw new Error('Selecciona de 2 a 6 archivos existentes bajo src/ separados por comas.');
+  const task=validateAutopilotGoal(goal,files);
   const response=await api<{workflow_run_id?:number;html_url?:string}>(repo,token,
     '/actions/workflows/'+id+'/dispatches','POST',{
-      ref:repo.branch,inputs:{goal:task,files:paths.join(',')}
+      ref:repo.branch,inputs:task
     },request);
   if(response && response.workflow_run_id!==undefined&&
      (!Number.isSafeInteger(response.workflow_run_id)||response.workflow_run_id<=0))

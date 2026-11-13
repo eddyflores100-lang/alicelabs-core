@@ -39,6 +39,7 @@ export function validateAutopilotGoal(goal:string,files:string):{goal:string;fil
   const summary=goal.replace(/[\r\n\t]/g,' ').trim();
   if(summary.length<5||summary.length>1600||/[\u0000-\u001f\u007f]/.test(summary))
     throw new Error('Especifica un objetivo de entre 5 y 1600 caracteres.');
+  if(files.trim().toLowerCase()==='auto')return {goal:summary,files:'auto'};
   const paths=files.split(',').map(x=>x.trim()).filter(Boolean);
   const actualPaths=paths.map(value=>value.split('#L')[0]);
   if(paths.length<2||paths.length>6||new Set(actualPaths).size!==paths.length||

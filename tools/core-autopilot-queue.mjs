@@ -28,9 +28,13 @@ export function parseAutopilotIssue(issue){
      typeof payload.goal!=='string'||typeof payload.files!=='string')return null;
   const goal=payload.goal.replace(/[\r\n\t]+/g,' ').trim();
   if(goal.length<5||goal.length>1600||/[\u0000-\u001f\u007f]/.test(goal))return null;
-  let paths;
-  try{paths=parseScopedPaths(payload.files);}catch{return null;}
-  return {number:issue.number,goal,files:paths.join(',')};
+  let files;
+  if(payload.files.trim().toLowerCase()==='auto'){
+    files='auto';
+  }else{
+    try{files=parseScopedPaths(payload.files).join(',');}catch{return null;}
+  }
+  return {number:issue.number,goal,files};
 }
 function dailyLimit(value){
   const raw=Number(value);
