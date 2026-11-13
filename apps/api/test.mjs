@@ -127,3 +127,46 @@ test('Gemini discovery only includes generateContent text models', async () => {
     assert.equal(data.models[0].context, 1048576);
   });
 });
+
+test('DeepSeek discovery uses only the official models endpoint and authenticated caller', async () => {
+  let calls = 0;
+  await withFakeFetch(async (url, init) => {
+    calls++;
+    assert.equal(url, 'https://api.deepseek.com/models');
+    assert.equal(init.headers.Authorization, 'Bearer ' + key);
+    return Response.json({ object: 'list', data: [
+      { id: 'deepseek-flash', name: 'DeepSeek-V4.1-Flash', context_window: 1048576, output_modalities: ['text'] },
+      { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', context_window: 1048576, output_modalities: ['text'] },
+      { id: 'deepseek-special-audio', output_modalities: ['audio'] }
+    ] });
+  }, async () => {
+    const r = await worker.fetch(request('/api/models', { method:'POST', body: { provider: 'deepseek', apiKey: key } }));
+    assert.equal(r.status, 200);
+    const data = await r.json();
+    assert.equal(data.models.length, 2);
+    assert.equal(data.models[0].id, 'deepseek-flash');
+    assert.equal(data.models[0].context, 1048576);
+    assert.equal(data.models[0].name, 'DeepSeek-V4.1-Flash');
+    assert.doesNotMatch(JSON.stringify(data), /sk-secret/);
+  });
+  assert.equal(calls, 1);
+});
+test('DeepSeek chat calls official endpoint without any session or proxy rotation', async () => {
+  let calls = 0;
+  await withFakeFetch(async (url, init) => {
+    calls++;
+    assert.equal(url, 'https://api.deepseek.com/chat/completions');
+    assert.equal(init.headers.Authorization, 'Bearer ' + key);
+    const body = JSON.parse(init.body);
+    assert.equal(body.model, 'deepseek-flash');
+    assert.equal(body.messages[0].role, 'system');
+    return Response.json({ choices: [{ message: { content: 'Respuesta oficial DeepSeek' } }] });
+  }, async () => {
+    const r = await worker.fetch(request('/api/agent', { method:'POST', body: {
+      provider:'deepseek', apiKey:key, model:'deepseek-flash', question:'Explica mi código'
+    } }));
+    assert.equal(r.status, 200);
+    assert.equal((await r.json()).answer, 'Respuesta oficial DeepSeek');
+  });
+  assert.equal(calls, 1);
+});

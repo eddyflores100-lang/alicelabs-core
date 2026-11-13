@@ -77,3 +77,17 @@ AliceLabs Core incluye una conexión alternativa a las API keys: **Continuar con
 **Estado:** se ha probado el emparejamiento, restricciones de origen, creación de URL OAuth y build web. La autenticación de una cuenta real y la inferencia con su plan todavía requieren una autorización manual del titular; no se consideran verificadas de extremo a extremo.
 
 Ver [guía del componente ChatGPT](../../tools/chatgpt-companion/README.md).
+
+## Centro universal de conexiones (v0.5)
+
+Desde el botón **Conectar mis IA** o el menú de ajustes se abre un centro que muestra el estado real de cada proveedor.
+
+- **ChatGPT:** integración OAuth de código abierto desarrollada en beta con componente local y múltiples registros independientes, sujeta a autorización de la cuenta y disponibilidad del servicio. No se utilizan tokens en Pages ni Workers.
+- **Gemini:** instrucciones y comando para ejecutar el **Gemini CLI original** con inicio de sesión de Google en su propio proceso. Google prohíbe reutilizar el OAuth de Gemini CLI para alimentar clientes externos. No hay conexión directa de cuenta Google a Core Agent.
+- **Claude:** instrucciones y comando para el **Claude Code original** con inicio de sesión nativo. Anthropic no permite que una aplicación de terceros use credenciales de suscripción Claude.ai como su propio backend. No se importan tokens.
+- **DeepSeek:** el chat web de DeepSeek sigue independiente; Core Agent sí puede consultar directamente modelos y completar solicitudes por API con una clave legítima de cada cuenta.
+- **OpenRouter, OpenAI, Anthropic, Google y DeepSeek:** perfiles API separados en memoria, con varias claves por proveedor; la ruta inteligente selecciona solo modelos anunciados por esas cuentas.
+
+El centro no muestra una herramienta CLI como cuenta conectada a Core Agent. El botón copiar coloca el comando correspondiente en el portapapeles; **se ejecuta en una terminal nativa**, no en la terminal de una página web. No se crean perfiles de dispositivo falsos ni se evaden cuotas o restricciones.
+
+Referencias oficiales: https://developers.openai.com/siwc/token-sharing-open-source ; https://github.com/google-gemini/gemini-cli/blob/main/docs/resources/faq.md ; https://code.claude.com/docs/en/legal-and-compliance ; https://api-docs.deepseek.com/api/list-models/ .

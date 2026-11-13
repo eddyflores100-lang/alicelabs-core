@@ -19,3 +19,11 @@ Recomendado: introducir autenticación multiusuario antes de habilitar proveedor
 - Sin ejecución de shell, rotación de identidades, fingerprints ni proxies de evasión. Las cuentas y preferencias viven en la web apps/web/src/routing.ts y memoria de la pestaña.
 
 Pruebas: pnpm --filter @core/agent-worker test.
+
+## DeepSeek API (v1.2)
+
+Ahora el Worker admite `provider=deepseek`. El descubrimiento autenticado consulta `GET https://api.deepseek.com/models` y selecciona únicamente modelos de respuesta de texto. La generación utiliza `POST https://api.deepseek.com/chat/completions`, con clave API aportada por el usuario en cada solicitud y sin guardar credenciales.
+
+Este método **no** consume la cuenta del chat web de DeepSeek ni crea una sesión con su correo. No existe en esta implementación OAuth de chat reutilizable por una tercera IDE. Cada clave pertenece a un perfil explícito; no hay reintentos por otras cuentas para evitar rate limits.
+
+La suite del Worker incorpora pruebas de DeepSeek con fetch simulado para catálogo, respuestas y ausencia de credenciales en los resultados. Las solicitudes reales requieren una clave del titular y no se han probado con una cuenta de producción.

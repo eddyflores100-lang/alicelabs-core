@@ -8,7 +8,8 @@ const DEFAULT_MODELS = Object.freeze({
   openai: 'gpt-6.1-sol',
   openrouter: 'openai/gpt-6.1-sol',
   anthropic: 'claude-sonnet-4-5',
-  google: 'gemini-2.5-flash'
+  google: 'gemini-2.5-flash',
+  deepseek: 'deepseek-flash'
 });
 const MAX_BODY = 130000;
 const PROVIDERS = Object.keys(DEFAULT_MODELS);
@@ -102,6 +103,7 @@ function formatModel(entry, provider, rank = null) {
   const id = provider === 'google' ? String(entry.name || '').replace(/^models\//, '') : String(entry.id || '');
   if (!id || id.length > 120 || !textModel(id)) return null;
   if (provider === 'google' && !entry.supportedGenerationMethods?.includes('generateContent')) return null;
+  if (provider === 'deepseek' && Array.isArray(entry.output_modalities) && !entry.output_modalities.includes('text')) return null;
   if (provider === 'openai' && !/^(gpt-|o[134]-)/i.test(id)) return null;
   if (provider === 'anthropic' && !id.startsWith('claude-')) return null;
   const output = entry.architecture?.output_modalities;
@@ -131,6 +133,8 @@ async function listModels(provider, apiKey) {
     raw = await get('https://api.anthropic.com/v1/models?limit=100', { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }, apiKey);
   } else if (provider === 'google') {
     raw = await get('https://generativelanguage.googleapis.com/v1beta/models?pageSize=250', { 'x-goog-api-key': apiKey }, apiKey);
+  } else if (provider === 'deepseek') {
+    raw = await get('https://api.deepseek.com/models', { Authorization: 'Bearer ' + apiKey }, apiKey);
   } else throw Object.assign(new Error('Proveedor no admitido'), { status: 400 });
   const items = Array.isArray(raw.data) ? raw.data : Array.isArray(raw.models) ? raw.models : [];
   const models = items.map((entry, i) => formatModel(entry, provider, i + 1)).filter(Boolean).slice(0, 180);
@@ -147,6 +151,11 @@ async function callProvider({ provider, model, apiKey, system, messages }) {
   } else if (provider === 'openrouter') {
     endpoint = 'https://openrouter.ai/api/v1/chat/completions';
     headers = { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' };
+    body = { model, messages: [{ role: 'system', content: system }, ...messages], stream: false };
+    extract = data => cleanText(data.choices?.[0]?.message?.content);
+  } else if (provider === 'deepseek') {
+    endpoint = 'https://api.deepseek.com/chat/completions';
+    headers = { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' };
     body = { model, messages: [{ role: 'system', content: system }, ...messages], stream: false };
     extract = data => cleanText(data.choices?.[0]?.message?.content);
   } else if (provider === 'anthropic') {
@@ -176,7 +185,7 @@ export default {
     const url = new URL(request.url);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: headersFor(origin) });
     if (request.method === 'GET' && url.pathname === '/api/health') {
-      return json({ ok: true, service: 'alicelabs-core-agent', version: '1.1.0', mode: 'bring-your-own-key', providers: DEFAULT_MODELS, features: ['model-discovery', 'guided-workflows', 'multi-connection-client'] }, 200, origin);
+      return json({ ok: true, service: 'alicelabs-core-agent', version: '1.2.0', mode: 'bring-your-own-key', providers: DEFAULT_MODELS, features: ['model-discovery', 'guided-workflows', 'multi-connection-client'] }, 200, origin);
     }
     if (request.method !== 'POST' || !['/api/models', '/api/agent'].includes(url.pathname)) return reject('Ruta no encontrada', 404, origin);
     if (Number(request.headers.get('Content-Length') || 0) > MAX_BODY) return reject('Solicitud demasiado grande', 413, origin);

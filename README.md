@@ -84,3 +84,9 @@ node tools/chatgpt-companion/server.mjs
 En la IDE, selecciona **ChatGPT con correo** y usa el token de emparejamiento mostrado únicamente en tu terminal. Las credenciales OAuth nunca se introducen en la web ni se almacenan en Cloudflare. Estado beta: el inicio de sesión real requiere probarlo con consentimiento de su titular.
 
 Más información: [Integración ChatGPT con correo](tools/chatgpt-companion/README.md).
+
+### Centro universal de IA (web v0.5)
+
+En `https://alicelabs-core.pages.dev`, **Conectar mis IA** abre un centro que separa tres métodos diferentes: ChatGPT OAuth elegible para aplicaciones abiertas, ejecución de clientes **nativos** oficiales con sus propias cuentas (Gemini CLI y Claude Code), y accesos API a OpenAI, OpenRouter, Anthropic, Gemini y DeepSeek con varios perfiles independientes.
+
+Los programas nativos mantienen sus sesiones en su propia terminal; **no** alimentan el chat de AliceLabs Core ni entregan sus tokens al Worker. DeepSeek únicamente funciona dentro del agente usando su API oficial; el chat web requiere su propia aplicación. Ver [conexiones y límites](apps/web/README.md).

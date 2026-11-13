@@ -14,6 +14,8 @@ function qualityBase(provider: Provider, id: string) {
   if (/gpt-6\.1-sol|claude-opus|gemini-3(?:\.5)?-pro|gemini-4.*pro/.test(s)) return 114;
   if (/gpt-6\.1-terra|claude-sonnet-5|gpt-5\.6|gemini-3-pro/.test(s)) return 108;
   if (/gpt-6-sol|claude-sonnet|gemini-2\.5-pro|gemini-3.*flash/.test(s)) return 102;
+  if (/deepseek-v4-pro/.test(s)) return 107;
+  if (/deepseek-flash/.test(s)) return 96;
   if (/gpt-6-luna|gpt-5\.5|gpt-5\.4|gemini-2\.5-flash/.test(s)) return 96;
   if (/gpt-5|gpt-4\.1|gpt-4o|gemini-2.*flash|haiku/.test(s)) return 87;
   if (provider === 'openrouter') return 89;

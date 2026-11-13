@@ -105,3 +105,47 @@
 .chatgpt-security{display:flex;align-items:flex-start;gap:9px;padding:10px;background:#202d2e;border:1px solid #3a5650;border-radius:8px;font-size:10px;line-height:1.7;color:#a6cbbd}
 .chatgpt-security svg{flex-shrink:0;color:#a0d4bc;margin-top:2px}
 @media(max-width:600px){.chatgpt-dialog{width:100%;max-height:91vh}.chatgpt-manager{padding:13px;gap:10px}.chatgpt-pair-input{flex-direction:column;align-items:stretch}.chatgpt-pair-input .primary-button{width:100%}.chatgpt-account{flex-wrap:wrap}.chatgpt-account-actions{margin-left:auto}.chatgpt-status>span:last-child{display:none}}
+
+/* Multi-provider connection center: distinguish native subscriptions from in-IDE API access */
+.ai-hub-dialog{width:min(850px,96vw);max-height:92vh}
+.ai-hub{padding:17px 22px 22px;display:flex;flex-direction:column;gap:11px}
+.ai-hub-intro{display:flex;gap:12px;align-items:center;background:linear-gradient(120deg,#342b51,#1d2737);border:1px solid #494365;border-radius:11px;padding:14px}
+.ai-hub-logo{flex-shrink:0;width:41px;height:41px;border-radius:12px;background:linear-gradient(140deg,#5b4e9d,#283a57);color:#dfd3ff;display:flex;align-items:center;justify-content:center}
+.ai-hub-intro strong{font-size:14px;font-weight:700;color:#f2ecff}
+.ai-hub-intro p{margin:5px 0 0;font-size:11px;line-height:1.6;color:#b1bbcd}
+.ai-hub-totals{display:flex;gap:8px;flex-wrap:wrap}
+.ai-hub-totals>div{display:flex;align-items:center;gap:7px;min-height:32px;padding:8px 11px;border:1px solid #353d4f;border-radius:8px;background:#202636;color:#a8b3ca;font-size:10px;line-height:1.4}
+.ai-hub-totals svg{color:#b9a9f0}.ai-hub-totals strong{font-size:12px;color:#f0ecff}
+.ai-hub-label{margin-top:7px;font-size:9px;letter-spacing:1.5px;color:#939bb0;font-weight:800}
+.ai-hub-card{display:flex;flex-direction:column;gap:10px;border:1px solid #384055;border-radius:10px;padding:14px;background:#1a2230}
+.ai-hub-card.ai-hub-featured{border-color:#655ca0;background:linear-gradient(110deg,#292640,#1c2334)}
+.ai-hub-card-heading{display:flex;align-items:center;gap:10px;min-width:0}
+.ai-hub-provider-icon{height:35px;width:35px;flex-shrink:0;display:flex;align-items:center;justify-content:center;border:1px solid #49546a;border-radius:9px;color:#d6dff5;background:#273149}
+.ai-hub-provider-icon.chatgpt-icon{background:#344c49;border-color:#467869;color:#b7e2cc}
+.ai-hub-provider-icon.gemini-icon{background:#283554;border-color:#506caf;color:#adcbff}
+.ai-hub-provider-icon.claude-icon{background:#50352f;border-color:#9c685c;color:#ffcfbb}
+.ai-hub-provider-icon.deepseek-icon{background:#283d50;border-color:#4d7ea0;color:#ade0ff}
+.ai-hub-provider-icon.openrouter-icon{background:#383056;border-color:#6d5599;color:#dfc9ff}
+.ai-hub-card-heading>div:nth-child(2){display:flex;min-width:0;flex-direction:column;gap:3px;flex:1}
+.ai-hub-card-heading strong{font-size:12px;font-weight:700;color:#f0f1fb}
+.ai-hub-card-heading span:not(.ai-hub-state){font-size:10px;color:#9ea9ba;line-height:1.4}
+.ai-hub-card p{margin:0;font-size:11px;line-height:1.65;color:#a6b2c4}
+.ai-hub-state{border:1px solid #515c70;border-radius:5px;padding:5px 7px;color:#bbc5d9;background:#293246;font-size:9px;white-space:nowrap;font-weight:700}
+.ai-hub-state.ready{border-color:#4e866f;color:#b9e9d0;background:#274337}
+.ai-hub-state.native{border-color:#665678;color:#d8bded;background:#332c40}
+.ai-hub-state.api{border-color:#4f698e;color:#bfd7f2;background:#29384d}
+.ai-hub-featured>.primary-button{align-self:flex-start}
+.ai-hub-native-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.native-provider-card{min-width:0}
+.ai-hub-command-label{margin-top:4px;font-size:10px;color:#8d9cb3;line-height:1.5}
+.ai-hub-command{display:flex;align-items:center;gap:10px;min-width:0;padding:9px 9px 9px 11px;border:1px solid #333f4f;background:#101622;border-radius:7px}
+.ai-hub-command code{min-width:0;flex:1;overflow-wrap:anywhere;font:10px/1.7 'JetBrains Mono',Consolas,monospace;color:#dce4f7}
+.ai-hub-command button{flex-shrink:0;display:flex;align-items:center;justify-content:center;width:25px;height:25px;border-radius:5px;background:#292f43;color:#b9adff}
+.ai-hub-command button:hover{background:#3c4160;color:#fff}
+.ai-hub-native-actions,.ai-hub-action-row{display:flex;align-items:center;justify-content:space-between;gap:9px;flex-wrap:wrap}
+.ai-hub-native-actions>a,.ai-hub-native-actions>button,.ai-hub-action-row>a{display:inline-flex;align-items:center;gap:6px;font-size:10px;color:#c6bafc}
+.ai-hub-native-actions>a:hover,.ai-hub-native-actions>button:hover,.ai-hub-action-row>a:hover{color:#f4efff;text-decoration:underline}
+.ai-hub-policy{display:flex;gap:10px;align-items:flex-start;border:1px solid #4f566c;background:#252b39;border-radius:9px;padding:11px;font-size:10px;line-height:1.7;color:#bbc5d3}
+.ai-hub-policy svg{color:#b9a4f4;flex-shrink:0;margin-top:1px}
+.ai-hub .dialog-actions{margin-top:5px}
+@media(max-width:750px){.ai-hub-dialog{max-height:95vh}.ai-hub{padding:12px;gap:9px}.ai-hub-native-grid{grid-template-columns:1fr}.ai-hub-state{font-size:8px}.ai-hub-totals>div{flex:1;min-width:150px}.ai-hub-intro{align-items:flex-start}}
