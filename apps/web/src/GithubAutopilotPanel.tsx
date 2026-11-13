@@ -6,6 +6,8 @@ import {
   readAutopilotConfig,setAutopilotConfig
 } from './githubAutopilot';
 import type {AutopilotConfig,AutopilotQueueIssue} from './githubAutopilot';
+import {getAutopilotInstallation,installAutopilotWorkflow,uninstallAutopilotWorkflow} from './githubAutopilotInstall';
+import type {AutopilotInstallation} from './githubAutopilotInstall';
 
 export default function GithubAutopilotPanel({repo,token,onNotice}:{
   repo:GithubRepoInfo;token:string;onNotice:(message:string,error?:boolean)=>void;
@@ -17,20 +19,55 @@ export default function GithubAutopilotPanel({repo,token,onNotice}:{
   const [queue,setQueue]=useState<AutopilotQueueIssue[]>([]);
   const [busy,setBusy]=useState(false);
   const [issueLink,setIssueLink]=useState('');
+  const [installation,setInstallation]=useState<AutopilotInstallation|null>(null);
+  const [installUrl,setInstallUrl]=useState('');
   const readStatus=useCallback(async()=>{
     try{
-      const [current,issues]=await Promise.all([
+      const [current,issues,workflow]=await Promise.all([
         readAutopilotConfig(repo,token),
-        listApprovedAutopilotIssues(repo,token)
+        listApprovedAutopilotIssues(repo,token),
+        getAutopilotInstallation(repo,token)
       ]);
-      setConfig(current);setLimit(current.dailyLimit);setQueue(issues);
+      setConfig(current);setLimit(current.dailyLimit);setQueue(issues);setInstallation(workflow);
     }catch(e){
       onNotice(e instanceof Error?e.message:'No se pudo consultar el autopiloto',true);
     }
   },[repo.owner,repo.repo,token,onNotice]);
   useEffect(()=>{void readStatus();},[readStatus]);
+  async function install(){
+    if(busy||installation?.builtin)return;
+    if(!window.confirm('¿Instalar o actualizar el WORKFLOW de GitHub Actions en '+repo.owner+'/'+repo.repo+'?\n\n'+
+      'Core creará un archivo YAML en la rama '+repo.branch+', fijado a una revisión concreta de AliceLabs Core. '+
+      'El archivo declara un cron cada cinco minutos y permisos para Issues y Pull Requests. '+
+      'Por defecto no activa llamadas pagadas ni procesa tareas; la activación se hace por separado.'))return;
+    setBusy(true);
+    try{
+      const saved=await installAutopilotWorkflow(repo,token);
+      setInstallUrl(saved.url);
+      setInstallation({installed:true,managed:true,pin:saved.sourceSha,fileSha:saved.fileSha,builtin:false,conflict:false});
+      onNotice('Workflow de GitHub instalado con versión Core fijada. No se activaron tareas pagadas.');
+    }catch(error){onNotice(error instanceof Error?error.message:'No se pudo instalar workflow',true);}
+    finally{setBusy(false);}
+  }
+  async function uninstall(){
+    if(busy||installation?.builtin||!installation?.installed)return;
+    if(config?.enabled||config?.codingEnabled){
+      onNotice('Desactiva primero el autopiloto antes de quitar su workflow.',true);return;
+    }
+    if(!window.confirm('¿DESINSTALAR el workflow administrado por AliceLabs Core de '+
+      repo.owner+'/'+repo.repo+'?\n\nSe borrará solamente el archivo de automatización identificado; no se tocarán otros workflows ni tareas existentes.'))return;
+    setBusy(true);
+    try{
+      await uninstallAutopilotWorkflow(repo,token);
+      setInstallation({installed:false,managed:false,pin:null,fileSha:null,builtin:false,conflict:false});
+      setInstallUrl('');
+      onNotice('Workflow del autopiloto retirado de GitHub.');
+    }catch(e){onNotice(e instanceof Error?e.message:'No se pudo desinstalar el workflow',true);}
+    finally{setBusy(false);}
+  }
   async function toggle(enable:boolean){
     if(busy)return;
+    if(enable&&!installation?.installed){onNotice('Instala primero el workflow del repositorio.',true);return;}
     if(enable && !window.confirm(
       '¿ACTIVAR el autopiloto de GitHub cada cinco minutos para este repositorio?\n\n'+
       'Solo ejecutará tareas de Issues aprobados. Hasta '+limit+' tareas de IA por día UTC, con un máximo de cinco solicitudes al proveedor por tarea. '+
@@ -69,6 +106,18 @@ export default function GithubAutopilotPanel({repo,token,onNotice}:{
       <span>{!config?'Estado pendiente':enabled?'Autopiloto activado':'Desactivado'}</span>
     </div>
     <p>Cuando está habilitado, GitHub busca cada cinco minutos tareas del propietario aprobadas. Core ejecuta planificador, programador y revisor, abre PRs y conserva el historial aunque cierres la aplicación. GitHub puede retrasar una ejecución programada.</p>
+    <div className="github-autopilot-installation">
+      <strong>Instalación en este repositorio</strong>
+      <p>{installation?.builtin?'Workflow incluido en Core':installation?.conflict?
+        'Ya existe un workflow ajeno en esta ruta. No será sobrescrito.':installation?.installed?
+        'Instalado · Core fijado a '+installation.pin?.slice(0,12):'No instalado; el cron no puede ejecutarse aquí.'}</p>
+      {!installation?.builtin&&!installation?.conflict&&<button type="button" className="secondary-button"
+        disabled={busy||installation===null} onClick={()=>void install()}>
+        {installation?.installed?'Actualizar workflow fijado':'Instalar workflow del autopiloto'}</button>}
+      {installation?.installed&&!installation.builtin&&<button type="button" className="secondary-button" disabled={busy||Boolean(config?.enabled||config?.codingEnabled)} onClick={()=>void uninstall()}>Desinstalar workflow</button>}
+      {installUrl&&<a href={installUrl} rel="noopener noreferrer" target="_blank">Revisar workflow instalado <ExternalLink size={13}/></a>}
+      <p>La instalación cambia el repositorio GitHub y requiere permisos Workflows: write y Contents: write. No inicia tareas de IA.</p>
+    </div>
     <div className="github-autopilot-budget">
       <label htmlFor="core-autopilot-budget">Límite de tareas de IA por día UTC</label>
       <select id="core-autopilot-budget" value={limit} disabled={busy}
@@ -81,7 +130,7 @@ export default function GithubAutopilotPanel({repo,token,onNotice}:{
     <div className="cloud-action-row">
       <button type="button" className="secondary-button" disabled={busy} onClick={()=>void readStatus()}><RefreshCw size={13}/> Actualizar</button>
       {enabled?<button type="button" className="secondary-button" disabled={busy} onClick={()=>void toggle(false)}><PauseCircle size={13}/> Desactivar autopiloto</button>:
-        <button type="button" className="primary-button" disabled={busy||!config} onClick={()=>void toggle(true)}><Play size={13}/> Activar con límite diario</button>}
+        <button type="button" className="primary-button" disabled={busy||!config||!installation?.installed} onClick={()=>void toggle(true)}><Play size={13}/> Activar con límite diario</button>}
     </div>
     <p className="github-autopilot-warning"><ShieldCheck size={14}/> Se requieren permisos GitHub Issues: write, Variables: write, Actions y Pull Requests; un secreto CORE_AGENT_API_KEY en GitHub. Las ejecuciones son bajo demanda, con presupuesto limitado y revisión obligatoria del PR.</p>
     <div className="github-autopilot-task-form">

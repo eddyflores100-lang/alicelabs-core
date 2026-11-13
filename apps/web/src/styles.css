@@ -441,3 +441,9 @@
 .github-autopilot-issues{display:grid;gap:7px;max-height:190px;overflow:auto}
 .github-autopilot-issues>a{display:flex;align-items:center;gap:8px;font-size:12px;color:inherit;text-decoration:none;overflow-wrap:anywhere;border:1px solid var(--border,#3e4551);border-radius:6px;padding:7px}
 .github-autopilot-issues>a>span{flex:1;min-width:0;overflow-wrap:anywhere}
+
+.github-autopilot-installation{margin:9px 0;padding:12px;border:1px solid var(--border,#3c4350);border-radius:10px;display:grid;gap:8px}
+.github-autopilot-installation>strong{font-size:13px}
+.github-autopilot-installation>p{font-size:12px;line-height:1.5;margin:0}
+.github-autopilot-installation>button{justify-self:start}
+.github-autopilot-installation>a{font-size:12px;display:inline-flex;align-items:center;gap:7px;overflow-wrap:anywhere}
