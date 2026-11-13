@@ -45,3 +45,19 @@ Publicar el directorio `apps/web/dist`. El script copia Monaco a `public/vs` dur
 - La carpeta local no se sube automáticamente a Cloudflare. Sólo se transmite contenido de archivo activo cuando el usuario lo incluye en la consulta o selecciona edición.
 
 Seguridad del Bridge: se escucha sólo en `127.0.0.1:39007`; requiere token aleatorio de sesión, origen Pages autorizado y confirmación `SI` en terminal por cada comando. **No exponer el puerto a internet ni usar túneles.**
+
+## Auto routing y cuentas múltiples (v1.1)
+
+- Se admiten varias conexiones con diferentes claves API del mismo proveedor; cada una lleva su alias.
+- Al añadir una clave se comprueba su validez y se consultan los modelos disponibles para ese perfil mediante el Worker.
+- El selector ofrece prioridad de calidad, equilibrada o económica, cuenta automática/manual y modelo automático/manual.
+- La selección de calidad es heurística: depende de familia, disponibilidad del catálogo, precio cuando se publica, velocidad aproximada y preferencias. No es una evaluación definitiva de modelos.
+- Las claves solo residen en memoria de la pestaña y se pierden al recargar. No se escriben en localStorage, KV, D1, R2, logs ni cookies.
+- No hay cambios de cuenta automáticos ante errores 401 o 429, ni se crean proxies o fingerprints para evitar restricciones.
+- El modo Guia produce pasos y acciones de interfaz permitidas (abrir carpeta, GitHub, buscar, configurar, terminal, guardar y proponer una edición). Solo se activan al pulsarlas.
+- El mapa de rutas del proyecto solo se envía al habilitar Mapa proyecto. El contenido del archivo se envía al marcar Archivo o elegir Editar.
+- La guía no es un runtime autónomo: no ejecuta herramientas, tareas programadas, cambios Git ni comandos por sí sola.
+
+Ejecutar las pruebas del backend: pnpm --filter @core/agent-worker test.
+
+Pruebas del selector de modelos: pnpm --filter @core/web test:routing (Node 24 recomendado).

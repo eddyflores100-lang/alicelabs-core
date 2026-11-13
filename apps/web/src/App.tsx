@@ -16,8 +16,10 @@ import {
   makeFile, persistDocument, readDocument, scanFolder
 } from './workspace';
 import type { FileNode, OpenDocument, Workspace } from './workspace';
-import { DEFAULT_MODEL, pingWorker, requestAgent } from './agent';
-import type { ChatMessage, Provider } from './agent';
+import { discoverModels, pingWorker, requestAgent } from './agent';
+import type { ChatMessage, Provider, Connection, Guidance, GuideStep } from './agent';
+import { chooseRoute } from './routing';
+import type { Priority } from './routing';
 
 // Load Monaco from same-origin static assets; no CDN and no 7 MB bundler worker.
 loader.config({ paths: { vs: '/vs' } });
@@ -82,12 +84,22 @@ export default function App() {
   const [busyWorkspace, setBusyWorkspace] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([{ id: 1, time: stamp(), level: 'info', text: 'Core iniciado. Abre una carpeta o repositorio para comenzar.' }]);
   const [toast, setToast] = useState('');
-  const [provider, setProvider] = useState<Provider>('openrouter');
-  const [model, setModel] = useState(DEFAULT_MODEL.openrouter);
-  const [apiKey, setApiKey] = useState('');
+  // All credentials remain in this tab's RAM. No localStorage or backend vault.
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const [draftProvider, setDraftProvider] = useState<Provider>('openrouter');
+  const [draftLabel, setDraftLabel] = useState('');
+  const [draftKey, setDraftKey] = useState('');
+  const [addingConnection, setAddingConnection] = useState(false);
+  const [refreshingId, setRefreshingId] = useState<string | null>(null);
+  const [priority, setPriority] = useState<Priority>('balanced');
+  const [selectedProfile, setSelectedProfile] = useState('auto');
+  const [selectedModel, setSelectedModel] = useState('auto');
+  const [lastRoute, setLastRoute] = useState<{ model: string; provider: Provider; profile: string; reason: string } | null>(null);
   const [workerReady, setWorkerReady] = useState<boolean | null>(null);
   const [includeFile, setIncludeFile] = useState(false);
-  const [agentMode, setAgentMode] = useState<'chat' | 'edit'>('chat');
+  const [includeProject, setIncludeProject] = useState(false);
+  const [agentMode, setAgentMode] = useState<'chat' | 'edit' | 'guide'>('chat');
+  const [guidance, setGuidance] = useState<Guidance | null>(null);
   const [question, setQuestion] = useState('');
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [agentBusy, setAgentBusy] = useState(false);
@@ -108,6 +120,14 @@ export default function App() {
   const dirty = useMemo(() => docs.filter(doc => doc.text !== doc.savedText), [docs]);
   const allFiles = useMemo(() => workspace ? flatten(workspace.nodes).filter(n => n.kind === 'file') : [], [workspace]);
   const filteredFiles = useMemo(() => allFiles.filter(n => n.path.toLowerCase().includes(filter.trim().toLowerCase())).slice(0, 180), [allFiles, filter]);
+  const routePreview = useMemo(
+    () => chooseRoute(connections, priority, agentMode, question, selectedProfile, selectedModel),
+    [connections, priority, agentMode, question, selectedProfile, selectedModel]
+  );
+  const visibleModels = useMemo(() => {
+    const pool = selectedProfile === 'auto' ? connections : connections.filter(c => c.id === selectedProfile);
+    return Array.from(new Set(pool.flatMap(c => c.models.map(m => m.id)))).slice(0, 180);
+  }, [connections, selectedProfile]);
 
   const log = useCallback((text: string, level: LogEntry['level'] = 'info') => {
     setLogs(prev => [{ id: Date.now() + Math.random(), text, level, time: stamp() }, ...prev].slice(0, 250));
@@ -134,7 +154,7 @@ export default function App() {
   function resetWorkspace(next: Workspace) {
     if (dirty.length && !window.confirm('Hay cambios sin guardar. ¿Cambiar de proyecto y descartarlos?')) return false;
     setWorkspace(next); setDocs([]); setActivePath(null); setExpanded(new Set(next.nodes.filter(n => n.kind === 'directory').slice(0, 7).map(n => n.path)));
-    setHistory([]); setProposal(null); setSection('files'); setDialog(null);
+    setHistory([]); setGuidance(null); setProposal(null); setSection('files'); setDialog(null);
     log('Proyecto abierto: ' + next.name + (next.kind === 'github' ? ' · GitHub lectura' : ' · Carpeta local'));
     return true;
   }
@@ -235,38 +255,122 @@ export default function App() {
     window.addEventListener('keydown', shortcuts);
     return () => window.removeEventListener('keydown', shortcuts);
   });
-  function changeProvider(next: Provider) { setProvider(next); setModel(DEFAULT_MODEL[next]); setApiKey(''); }
+  async function addConnection(e: FormEvent) {
+    e.preventDefault();
+    const key = draftKey.trim();
+    if (!key || addingConnection) return;
+    if (connections.some(c => c.apiKey === key && c.provider === draftProvider)) {
+      notify('Esta clave ya está conectada. Puedes agregar otra clave del mismo proveedor.', true);
+      return;
+    }
+    setAddingConnection(true);
+    try {
+      const catalog = await discoverModels(draftProvider, key);
+      const label = draftLabel.trim().slice(0, 60) || labelProvider[draftProvider] + ' ' + (connections.filter(c => c.provider === draftProvider).length + 1);
+      const connection: Connection = {
+        id: crypto.randomUUID(), label, provider: draftProvider, apiKey: key,
+        models: catalog.models, refreshedAt: catalog.refreshedAt, meta: catalog.meta
+      };
+      setConnections(prev => [...prev, connection]);
+      setSelectedModel('auto');
+      setDraftLabel('');
+      setDraftKey('');
+      notify('Conectada ' + label + ' · ' + catalog.models.length + ' modelos descubiertos');
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'No se pudo verificar la clave API', true);
+    } finally {
+      setAddingConnection(false);
+    }
+  }
+  async function refreshConnection(connection: Connection) {
+    setRefreshingId(connection.id);
+    try {
+      const catalog = await discoverModels(connection.provider, connection.apiKey);
+      setConnections(prev => prev.map(c => c.id === connection.id ? { ...c, ...catalog } : c));
+      notify('Catálogo actualizado: ' + connection.label + ' (' + catalog.models.length + ' modelos)');
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Error al actualizar el catálogo', true);
+    } finally {
+      setRefreshingId(null);
+    }
+  }
+  function removeConnection(id: string) {
+    setConnections(prev => prev.filter(c => c.id !== id));
+    if (selectedProfile === id) setSelectedProfile('auto');
+    setSelectedModel('auto');
+    notify('Conexión desconectada de esta pestaña');
+  }
+  function runGuideStep(action: GuideStep['action']) {
+    if (!action) return;
+    if (action === 'open_folder') void openLocal();
+    else if (action === 'open_github') setDialog('github');
+    else if (action === 'search_files') { setSection('search'); setSidebarOpen(true); }
+    else if (action === 'configure_ai') setDialog('settings');
+    else if (action === 'open_terminal') { setBottomOpen(true); setBottomTab('terminal'); if (!bridgeConnected) setDialog('bridge'); }
+    else if (action === 'save_active') { if (activePath) void saveDoc(activePath); else notify('Primero abre un archivo', true); }
+    else if (action === 'edit_active') {
+      setAgentMode('edit');
+      setQuestion('Propón una mejora concreta de este archivo sin alterar las funciones existentes.');
+    }
+  }
   async function askAgent(e?: FormEvent) {
     e?.preventDefault();
     const prompt = question.trim();
     if (!prompt || agentBusy) return;
-    if (!apiKey.trim()) { notify('Configura tu proveedor y clave de IA en Conexiones', true); setDialog('settings'); return; }
+    const route = chooseRoute(connections, priority, agentMode, prompt, selectedProfile, selectedModel);
+    if (!route) {
+      notify('Conecta una cuenta y descubre sus modelos en Conexiones', true);
+      setDialog('settings');
+      return;
+    }
     if (agentMode === 'edit' && (!active || active.readOnly)) {
-      notify('Abre un archivo local editable para proponer cambios', true); return;
+      notify('Abre un archivo local editable para proponer cambios', true);
+      return;
     }
     const path = active?.path || '';
     const includeActive = !!active && (includeFile || agentMode === 'edit');
     const fileContext = includeActive && active ? active.text : '';
+    const projectContext = includeProject && workspace
+      ? 'Workspace: ' + workspace.name + '\nArchivos visibles:\n' + allFiles.slice(0, 50).map(f => f.path).join('\n')
+      : '';
     const before = active?.text || '';
     const userMessage: ChatMessage = { role: 'user', content: prompt, timestamp: Date.now() };
     setHistory(prev => [...prev, userMessage]);
-    setQuestion(''); setAgentBusy(true);
+    setQuestion('');
+    setGuidance(null);
+    setAgentBusy(true);
+    setLastRoute({ model: route.model.id, provider: route.connection.provider, profile: route.connection.label, reason: route.reason });
     try {
-      const r = await requestAgent({ provider, model, apiKey, action: agentMode,
-        question: prompt, path: includeActive ? path : '', code: fileContext, history });
+      const result = await requestAgent({
+        provider: route.connection.provider,
+        model: route.model.id,
+        apiKey: route.connection.apiKey,
+        action: agentMode,
+        question: prompt,
+        project: projectContext,
+        path: includeActive ? path : '',
+        code: fileContext,
+        history
+      });
       if (agentMode === 'edit') {
-        if (typeof r.answer !== 'string' || !r.answer.trim()) throw new Error('El modelo no devolvió un archivo válido');
-        setProposal({ path, next: r.answer, original: before });
-        setHistory(prev => [...prev, { role: 'assistant', content: 'Propuesta de edición lista para ' + path + '. Revísala antes de aplicarla.', timestamp: Date.now() }]);
+        if (typeof result.answer !== 'string' || !result.answer.trim()) throw new Error('El modelo no devolvió contenido válido');
+        setProposal({ path, next: result.answer, original: before });
+        setHistory(prev => [...prev, { role: 'assistant', content: 'Propuesta lista para ' + path + '. Revisa el diff antes de aplicar.', timestamp: Date.now() }]);
+      } else if (agentMode === 'guide') {
+        const plan = result.guide || { summary: result.answer || 'Guía sin pasos', steps: [] };
+        setGuidance(plan);
+        setHistory(prev => [...prev, { role: 'assistant', content: plan.summary, timestamp: Date.now() }]);
       } else {
-        setHistory(prev => [...prev, { role: 'assistant', content: r.answer || '', timestamp: Date.now() }]);
+        setHistory(prev => [...prev, { role: 'assistant', content: result.answer || '', timestamp: Date.now() }]);
       }
-      log('Agente respondió · ' + labelProvider[provider] + ' · ' + (r.durationMs || 0) + ' ms', 'success');
+      log('Agente · ' + route.connection.label + ' / ' + route.model.id + ' · ' + (result.durationMs || 0) + ' ms', 'success');
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Fallo de conexión';
-      setHistory(prev => [...prev, { role: 'assistant', content: 'Error: ' + msg, timestamp: Date.now() }]);
-      log('Agente: ' + msg, 'error');
-    } finally { setAgentBusy(false); }
+      setHistory(prev => [...prev, { role: 'assistant', content: 'Error: ' + msg + (msg.includes('429') ? ' Revisa la cuota en el proveedor.' : ''), timestamp: Date.now() }]);
+      log('Agente (' + route.connection.label + '): ' + msg, 'error');
+    } finally {
+      setAgentBusy(false);
+    }
   }
   function applyProposal() {
     if (!proposal) return;
@@ -419,7 +523,7 @@ export default function App() {
                 <h1>Construye con <span>claridad.</span></h1><p>Tu código, tus herramientas y tus agentes. Un espacio diseñado para trabajar, no para mostrar paneles vacíos.</p>
                 <div className="welcome-actions"><button className="primary-button" disabled={busyWorkspace} onClick={() => void openLocal()}>{busyWorkspace ? <LoaderCircle size={16} className="spin"/> : <FolderOpen size={16}/>} Abrir carpeta local</button><button className="secondary-button" onClick={() => setDialog('github')}><Github size={16}/> Explorar GitHub</button></div>
                 <div className="welcome-shortcuts"><span><kbd>Ctrl</kbd> + <kbd>K</kbd> Paleta de acciones</span><span><kbd>Ctrl</kbd> + <kbd>S</kbd> Guardar</span></div>
-              </div><div className="welcome-grid"/><div className="welcome-version">CORE / WEB WORKSPACE</div>
+              </div><div className="welcome-grid"/><div className="welcome-version">CORE / RESIDENT WORKSPACE v0.3</div>
             </div>}
         </div>
         {bottomOpen && <section className="bottom-panel">
@@ -434,28 +538,57 @@ export default function App() {
 
       {agentOpen && <><div className="resize-grip" onPointerDown={resizeAgent} title="Arrastra para cambiar el ancho"/><aside className="agent-pane">
         <div className="agent-heading"><div className="agent-identity"><div className="agent-avatar"><Sparkles size={18}/></div><div><strong>Core Agent</strong><span>ASISTENTE DE DESARROLLO</span></div></div><button className="icon-button" title="Ajustes de IA" onClick={() => setDialog('settings')}><Settings2 size={16}/></button></div>
-        <div className="agent-model-row"><div className="agent-model"><span className={apiKey ? 'connected-dot':'unconnected-dot'}/><span>{labelProvider[provider]}</span><span className="agent-model-short">{model}</span></div><button onClick={() => setDialog('settings')} title="Cambiar modelo"><ChevronDown size={15}/></button></div>
+        <div className="agent-model-row"><div className="agent-model"><span className={routePreview ? 'connected-dot':'unconnected-dot'}/><span>{routePreview ? routePreview.connection.label : 'Sin cuenta conectada'}</span><span className="agent-model-short">{routePreview ? routePreview.model.id : 'Conectar modelos'}</span></div><button onClick={() => setDialog('settings')} title="Rutas, modelos y cuentas"><ChevronDown size={15}/></button></div>
+        <button className="route-banner" onClick={() => setDialog('settings')} title={routePreview?.reason || 'Conecta un proveedor para descubrir modelos'}>
+          <Sparkles size={13}/> {routePreview ? 'Auto · ' + priority + ' · ' + routePreview.considered + ' modelos evaluados' : 'Conecta una cuenta para activar el agente'} <ArrowRight size={12}/>
+        </button>
         <div className="agent-thread">
-          {!history.length && <div className="agent-starter"><div className="agent-star"><WandSparkles size={24}/></div><h2>Ideas que se vuelven código.</h2><p>Pregunta sobre el proyecto o solicita una modificación. Las ediciones se revisan antes de aplicarse.</p><div className="agent-suggestions"><button onClick={() => setQuestion('Explícame la arquitectura del archivo abierto y cómo mejorarla.')}>Explicar código <ArrowRight size={13}/></button><button onClick={() => { setAgentMode('edit'); setQuestion('Refactoriza este archivo para mejorar calidad, legibilidad y mantenimiento sin cambiar su comportamiento.'); }}>Refactorizar archivo <ArrowRight size={13}/></button></div></div>}
+          {!history.length && <div className="agent-starter"><div className="agent-star"><WandSparkles size={24}/></div><h2>Tu IA residente, a tu lado.</h2><p>{workspace ? 'Proyecto ' + workspace.name + ' preparado. Puedo guiarte, explicar el archivo abierto o proponerte una edición que revisarás.' : 'Puedo acompañarte desde abrir un proyecto hasta revisar el código, sin inventar acciones ni ejecutar comandos sin permiso.'}</p><div className="agent-suggestions"><button onClick={() => { setAgentMode('guide'); setQuestion('Guíame paso a paso para comenzar a trabajar con mi proyecto en AliceLabs Core.'); }}>Guíame en el IDE <ArrowRight size={13}/></button><button onClick={() => { setAgentMode('chat'); setQuestion('Explícame la arquitectura del archivo abierto y cómo mejorarla.'); }}>Explicar código <ArrowRight size={13}/></button><button onClick={() => { setAgentMode('edit'); setQuestion('Refactoriza este archivo para mejorar calidad y legibilidad sin cambiar su comportamiento.'); }}>Refactorizar archivo <ArrowRight size={13}/></button></div></div>}
           {history.map((m,i) => <div key={i} className={'chat-message '+m.role}><div className="chat-author">{m.role==='user'?'Tú':'CORE AGENT'}<span>{new Date(m.timestamp).toLocaleTimeString('es-EC',{hour:'2-digit',minute:'2-digit'})}</span></div><div className="chat-text">{m.content}</div></div>)}
-          {agentBusy && <div className="agent-thinking"><LoaderCircle size={15} className="spin"/> Consultando {labelProvider[provider]}...</div>}
+          {agentBusy && <div className="agent-thinking"><LoaderCircle size={15} className="spin"/> Consultando {lastRoute?.profile || 'modelo'}...</div>}
+          {guidance && <div className="guide-plan"><div className="guide-plan-title"><Bot size={16}/> Plan de trabajo <span>{guidance.steps.length} pasos</span></div>{guidance.steps.map((step,i) => <div className="guide-step" key={i}><div className="guide-step-number">{i+1}</div><div className="guide-step-body"><strong>{step.title}</strong><p>{step.description}</p>{step.action && <button onClick={() => runGuideStep(step.action)}>Abrir acción <ArrowRight size={12}/></button>}</div></div>)}</div>}
           {proposal && <div className="proposal-card"><div className="proposal-header"><CheckCircle2 size={16}/><strong>Propuesta preparada</strong></div><div className="proposal-path">{proposal.path}</div><div className="proposal-stats"><span>{proposal.original.split('\n').length} líneas actuales</span><ArrowRight size={13}/><span>{proposal.next.split('\n').length} propuestas</span></div><p>El cambio no se aplicará sin tu aprobación. Luego podrás guardarlo.</p><div className="proposal-actions"><button onClick={() => setProposal(null)} className="secondary-button">Descartar</button><button onClick={() => setDialog('diff')} className="secondary-button"><Code2 size={14}/> Revisar diff</button><button onClick={applyProposal} className="primary-button"><Check size={14}/> Aplicar al editor</button></div></div>}
         </div>
         <div className="agent-compose">
-          <div className="composer-tabs"><button className={agentMode==='chat'?'mode-active':''} onClick={() => setAgentMode('chat')}><MessageSquareText size={13}/> Preguntar</button><button className={agentMode==='edit'?'mode-active':''} onClick={() => setAgentMode('edit')}><Code2 size={13}/> Editar archivo</button></div>
-          <form onSubmit={askAgent} className="compose-box"><textarea rows={3} value={question} onChange={e => setQuestion(e.target.value)} onKeyDown={e => { if (e.key==='Enter' && !e.shiftKey) {e.preventDefault(); void askAgent();} }} placeholder={agentMode==='edit'?'Describe el cambio que quieres aplicar...':'Pregunta sobre tu código o proyecto...'} disabled={agentBusy}/><div className="compose-bottom"><label className="file-context-toggle"><input type="checkbox" checked={agentMode==='edit' || includeFile} onChange={e=>setIncludeFile(e.target.checked)} disabled={agentMode==='edit' || !active}/><span>{agentMode==='edit' ? 'Enviar archivo activo' : 'Incluir archivo'}</span></label><button className="send-button" type="submit" disabled={agentBusy || !question.trim()} title="Enviar al agente">{agentBusy ? <LoaderCircle size={17} className="spin"/> : <ArrowRight size={18}/>}</button></div></form>
-          <div className="agent-disclaimer"><ShieldCheck size={12}/> Clave solo en memoria · El contexto se envía únicamente al solicitarlo</div>
+          <div className="composer-tabs"><button className={agentMode==='chat'?'mode-active':''} onClick={() => setAgentMode('chat')}><MessageSquareText size={13}/> Preguntar</button><button className={agentMode==='edit'?'mode-active':''} onClick={() => setAgentMode('edit')}><Code2 size={13}/> Editar</button><button className={agentMode==='guide'?'mode-active':''} onClick={() => setAgentMode('guide')}><Bot size={13}/> Guía</button></div>
+          <form onSubmit={askAgent} className="compose-box"><textarea rows={3} value={question} onChange={e => setQuestion(e.target.value)} onKeyDown={e => { if (e.key==='Enter' && !e.shiftKey) {e.preventDefault(); void askAgent();} }} placeholder={agentMode==='edit'?'Describe el cambio que quieres aplicar...':agentMode==='guide'?'¿Qué quieres hacer? Te guiaré paso a paso.':'Pregunta sobre tu código o proyecto...'} disabled={agentBusy}/><div className="compose-bottom"><div className="context-options"><label className="file-context-toggle"><input type="checkbox" checked={agentMode==='edit' || includeFile} onChange={e=>setIncludeFile(e.target.checked)} disabled={agentMode==='edit' || !active}/><span>{agentMode==='edit' ? 'Archivo activo' : 'Archivo'}</span></label><label className="file-context-toggle"><input type="checkbox" checked={includeProject} onChange={e=>setIncludeProject(e.target.checked)} disabled={!workspace}/><span>Mapa proyecto</span></label></div><button className="send-button" type="submit" disabled={agentBusy || !question.trim()} title="Enviar al agente">{agentBusy ? <LoaderCircle size={17} className="spin"/> : <ArrowRight size={18}/>}</button></div></form>
+          <div className="agent-disclaimer"><ShieldCheck size={12}/> Cuentas solo en memoria · Sin rotación para eludir bloqueos · Revisa cuotas</div>
         </div>
       </aside></>}
     </div>
     <footer className="statusbar"><div className="status-left"><span className="status-highlight"><BrandMark/> Core</span><button onClick={() => setSection('activity')}><Activity size={12}/> {logs[0]?.level === 'error' ? 'Revisar evento' : 'Listo'}</button><span className="status-divider"/><span>{workspace?.kind === 'github' ? <Github size={12}/> : <HardDrive size={12}/>} {workspace?.name || 'Sin proyecto'}</span></div><div className="status-right">{active && <><span>{active.language}</span><span>{active.text.split('\n').length} líneas</span><span>{active.readOnly?'Lectura':'Editable'}</span></>}<button title="Mostrar terminal" onClick={()=>{setBottomOpen(true);setBottomTab('terminal');}}><SquareTerminal size={13}/></button><span>UTF-8</span></div></footer>
     {toast && <div className="toast" role="status"><CircleDot size={15}/>{toast}<button onClick={()=>setToast('')}><X size={14}/></button></div>}
-    {dialog && <div className="modal-backdrop" onMouseDown={e => {if(e.target===e.currentTarget)setDialog(null);}}><div className={'dialog '+(dialog==='commands'?'command-dialog':dialog==='diff'?'diff-dialog':'')} role="dialog" aria-modal="true">
+    {dialog && <div className="modal-backdrop" onMouseDown={e => {if(e.target===e.currentTarget)setDialog(null);}}><div className={'dialog '+(dialog==='commands'?'command-dialog':dialog==='diff'?'diff-dialog':dialog==='settings'?'settings-dialog':'')} role="dialog" aria-modal="true">
       {dialog==='diff' && proposal ? <><div className="dialog-top"><div><span className="dialog-eyebrow">REVISIÓN DE CAMBIOS</span><h3>{proposal.path}</h3></div><button className="dialog-close" onClick={()=>setDialog(null)}><X size={18}/></button></div><div className="diff-body"><DiffEditor original={proposal.original} modified={proposal.next} language={languageOf(proposal.path)} theme="vs-dark" options={{ readOnly: true, automaticLayout:true, minimap:{enabled:false}, fontSize:12, renderSideBySide: true, scrollBeyondLastLine:false }} /></div><div className="dialog-actions diff-actions"><button className="secondary-button" onClick={()=>setDialog(null)}>Volver</button><button className="primary-button" onClick={()=>{applyProposal();setDialog(null);}}><Check size={14}/> Aplicar al editor</button></div></> : dialog==='commands' ? <><div className="command-input"><Search size={19}/><input autoFocus placeholder="Escribe una acción o un archivo..." value={commandFilter} onChange={e=>setCommandFilter(e.target.value)}/><kbd>ESC</kbd></div><div className="command-list">{visibleCommands.map((item,i)=><button key={i} onClick={item.action}><item.icon size={17}/><div><strong>{item.title}</strong><small>{item.detail}</small></div><ArrowRight size={14}/></button>)}</div><div className="command-footer"><Keyboard size={13}/> Acciones y archivos del proyecto</div></>
-      : <><div className="dialog-top"><div><span className="dialog-eyebrow">ALICELABS CORE</span><h3>{dialog==='github'?'Abrir repositorio GitHub':dialog==='new'?'Nuevo archivo':dialog==='settings'?'Conexiones de IA':'Conectar terminal local'}</h3></div><button className="dialog-close" onClick={()=>setDialog(null)}><X size={18}/></button></div>
+      : <><div className="dialog-top"><div><span className="dialog-eyebrow">ALICELABS CORE</span><h3>{dialog==='github'?'Abrir repositorio GitHub':dialog==='new'?'Nuevo archivo':dialog==='settings'?'Cuentas y modelos inteligentes':'Conectar terminal local'}</h3></div><button className="dialog-close" onClick={()=>setDialog(null)}><X size={18}/></button></div>
         {dialog==='github' && <form onSubmit={openGithub} className="dialog-content"><p>Explora cualquier repositorio público de GitHub, con árbol de archivos y editor en modo lectura. Para editar y guardar, abre una carpeta local.</p><label>URL del repositorio</label><div className="input-with-icon"><Github size={16}/><input autoFocus placeholder="https://github.com/usuario/repositorio" value={githubURL} onChange={e=>setGithubURL(e.target.value)}/></div><div className="dialog-actions"><button type="button" className="secondary-button" onClick={()=>setDialog(null)}>Cancelar</button><button type="submit" className="primary-button" disabled={busyWorkspace||!githubURL.trim()}>{busyWorkspace?<LoaderCircle size={15} className="spin"/>:<ArrowRight size={15}/>} Abrir repositorio</button></div></form>}
         {dialog==='new' && <form onSubmit={createNew} className="dialog-content"><p>Crea un archivo en la carpeta local. Puedes indicar subcarpetas con /.</p><label>Nombre o ruta</label><div className="input-with-icon"><FilePlus2 size={16}/><input autoFocus placeholder="src/components/Nuevo.tsx" value={newPath} onChange={e=>setNewPath(e.target.value)}/></div><div className="dialog-actions"><button className="secondary-button" type="button" onClick={()=>setDialog(null)}>Cancelar</button><button className="primary-button" disabled={!newPath.trim()}>Crear archivo</button></div></form>}
-        {dialog==='settings' && <div className="dialog-content"><p>Conecta tus propias credenciales. La clave vive únicamente en memoria de esta pestaña y se transmite por HTTPS al Worker para contactar a tu proveedor. No se almacena en Cloudflare.</p><label>Proveedor</label><div className="provider-grid">{(Object.keys(labelProvider) as Provider[]).map(p=><button className={'provider-option '+(provider===p?'provider-selected':'')} key={p} onClick={()=>changeProvider(p)}><span>{labelProvider[p]}</span>{provider===p&&<Check size={15}/>}</button>)}</div><label>Modelo</label><input className="dialog-text-input" value={model} onChange={e=>setModel(e.target.value)} placeholder="Nombre exacto del modelo"/><label>Clave API</label><div className="input-with-icon"><LockKeyhole size={16}/><input type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder="Tu clave, nunca guardada en disco"/></div><div className="info-note"><ShieldCheck size={17}/><span>Solo se envía contexto de archivos cuando activas “Incluir archivo” o solicitas una edición. Las respuestas de código requieren revisión.</span></div><div className="dialog-actions"><button className="secondary-button" onClick={()=>{setApiKey('');notify('Credencial borrada de la sesión');}}>Borrar clave</button><button className="primary-button" onClick={()=>setDialog(null)}><Check size={15}/> Listo</button></div></div>}
+        {dialog==='settings' && <div className="dialog-content connection-manager">
+          <p>Conecta varias claves API, incluso del mismo proveedor. Cada perfil se verifica contra su API y descubre sus modelos. Las claves viven <strong>solo en esta pestaña</strong>; no se guardan en disco ni en Cloudflare.</p>
+          <div className="route-controls">
+            <label>Prioridad del agente<select value={priority} onChange={e => setPriority(e.target.value as Priority)}><option value="balanced">Equilibrada · recomendada</option><option value="quality">Máxima calidad aproximada</option><option value="economy">Economía y velocidad</option></select></label>
+            <label>Cuenta autorizada<select value={selectedProfile} onChange={e => { setSelectedProfile(e.target.value); setSelectedModel('auto'); }}><option value="auto">Automático entre mis conexiones</option>{connections.map(c => <option key={c.id} value={c.id}>{c.label} ({labelProvider[c.provider]})</option>)}</select></label>
+            <label className="route-model-control">Modelo<select value={selectedModel} onChange={e => setSelectedModel(e.target.value)}><option value="auto">Automático · analizar disponibilidad</option>{visibleModels.map(m => <option key={m} value={m}>{m}</option>)}</select></label>
+          </div>
+          {routePreview && <div className="selected-route"><Sparkles size={16}/><div><strong>{routePreview.model.id}</strong><span>{routePreview.connection.label} · {routePreview.considered} modelos evaluados</span><p>{routePreview.reason}</p></div></div>}
+          <div className="accounts-head"><strong>Mis conexiones</strong><span>{connections.length} {connections.length===1?'cuenta':'cuentas'} · {connections.reduce((n,c)=>n+c.models.length,0)} entradas de modelo</span></div>
+          <div className="account-list">
+            {connections.map(c => <div className="account-item" key={c.id}><div className="account-identity"><span className="connected-dot"/><div><strong>{c.label}</strong><small>{labelProvider[c.provider]} · {c.models.length} modelos</small></div></div><div className="account-actions">{c.meta && c.meta.remaining !== null && <span className="quota-hint">Crédito restante: {c.meta.remaining}</span>}<button title="Actualizar catálogo" onClick={() => void refreshConnection(c)} disabled={refreshingId===c.id}>{refreshingId===c.id?<LoaderCircle size={15} className="spin"/>:<RefreshCw size={15}/>}</button><button title="Desconectar cuenta" onClick={() => removeConnection(c.id)}><X size={15}/></button></div></div>)}
+            {!connections.length && <div className="accounts-empty"><LockKeyhole size={18}/> Añade una clave API para activar el selector de modelos y el asistente residente.</div>}
+          </div>
+          <form className="connection-form" onSubmit={addConnection}>
+            <div className="accounts-head"><strong>Añadir otra conexión</strong><span>Las claves se verifican antes de añadirse</span></div>
+            <label>Proveedor</label>
+            <div className="provider-grid">{(Object.keys(labelProvider) as Provider[]).map(p=><button type="button" className={'provider-option '+(draftProvider===p?'provider-selected':'')} key={p} onClick={()=>setDraftProvider(p)}><span>{labelProvider[p]}</span>{draftProvider===p&&<Check size={15}/>}</button>)}</div>
+            <label>Nombre de cuenta (opcional)</label>
+            <input className="dialog-text-input" value={draftLabel} onChange={e=>setDraftLabel(e.target.value)} maxLength={60} autoComplete="off" placeholder="Trabajo, personal, cliente..."/>
+            <label>Clave API de esta cuenta</label>
+            <div className="input-with-icon"><LockKeyhole size={16}/><input type="password" value={draftKey} onChange={e=>setDraftKey(e.target.value)} autoComplete="new-password" placeholder="Pega aquí una clave autorizada"/></div>
+            <button type="submit" className="primary-button add-account-button" disabled={addingConnection || !draftKey.trim()}>{addingConnection?<LoaderCircle size={15} className="spin"/>:<Plus size={15}/>} {addingConnection?'Descubriendo modelos...':'Conectar y detectar modelos'}</button>
+          </form>
+          <div className="info-note"><ShieldCheck size={17}/><span>Las cuentas no se cambian automáticamente ante errores 401 o 429; elige otra solo si sus reglas lo permiten. No se crean proxies, identidades falsas ni fingerprints. El agente usa los modelos disponibles en las conexiones que agregues.</span></div>
+          <div className="dialog-actions"><button className="secondary-button" onClick={()=>setDialog(null)}>Cerrar</button></div>
+        </div>}
         {dialog==='bridge' && <form onSubmit={connectBridge} className="dialog-content"><p>Para ejecutar comandos necesitas Core Local Bridge en tu propio equipo. Abre la terminal en la carpeta del repositorio y ejecuta:</p><div className="command-snippet"><code>node tools/local-bridge/server.mjs</code><button type="button" onClick={()=>void navigator.clipboard.writeText('node tools/local-bridge/server.mjs')} title="Copiar"><Copy size={15}/></button></div><p>El Bridge mostrará un token de sesión. Cada comando solicitará autorización en esa terminal.</p><label>Token de emparejamiento local</label><div className="input-with-icon"><LockKeyhole size={16}/><input type="password" autoFocus value={bridgeToken} onChange={e=>setBridgeToken(e.target.value)} placeholder="Pega el token que aparece en tu terminal"/></div><div className="dialog-actions"><button type="button" className="secondary-button" onClick={()=>setDialog(null)}>Cancelar</button><button className="primary-button" type="submit" disabled={!bridgeToken.trim()}><Wifi size={15}/> Conectar</button></div></form>}
         </>}
     </div></div>}

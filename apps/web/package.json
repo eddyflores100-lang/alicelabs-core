@@ -1,13 +1,14 @@
 {
   "name": "@core/web",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "node scripts/copy-monaco.mjs && vite --host 127.0.0.1",
     "build": "node scripts/copy-monaco.mjs && tsc --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:routing": "node --experimental-strip-types --test test-routing.mjs"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
