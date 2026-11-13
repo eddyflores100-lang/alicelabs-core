@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - "v*"
+      # Mobile prereleases must not trigger desktop packaging jobs.
+      - "!v*-preview"
 
 permissions:
   contents: write
