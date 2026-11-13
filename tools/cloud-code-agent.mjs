@@ -10,6 +10,7 @@ import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
 import {runBatchCodingTeam} from '../apps/web/src/multiFileTeam.ts';
+import {chooseSourceFiles} from './repository-scope.mjs';
 
 const MAX_FILES=6;
 const MAX_SOURCE_BYTES=12000;
@@ -167,10 +168,19 @@ export async function runCloudCoder({
   ensure(validSecret(githubToken),'Falta autorización GITHUB_TOKEN para crear PR.');
   ensure(/^[A-Za-z0-9._/-]{1,100}$/.test(baseBranch)&&!baseBranch.includes('..')&&
     !baseBranch.startsWith('/'),'Rama de origen inválida.');
-  const scoped=parseScopedPaths(paths);
-  const files=await readScopedFiles(root,scoped);
   const initialStatus=gitCommand(root,['status','--porcelain','--untracked-files=no']);
   ensure(!initialStatus,'El workspace ya tiene cambios. Se cancela antes de consumir tokens.');
+  const auto=typeof paths==='string'&&paths.trim().toLowerCase()==='auto';
+  let selectionCalls=0;
+  let scoped;
+  if(auto){
+    const tracked=gitCommand(root,['ls-files','-z','--','src','apps/web/src','apps/api/src','apps/remote/src']);
+    const selected=await chooseSourceFiles({root,goal,tracked,ask:(message,codeContext)=>
+      callModel({provider,model,apiKey,role:'scoper',message,codeContext},fetcher)});
+    scoped=parseScopedPaths(selected.selectors.join(','));
+    selectionCalls=1;
+  }else scoped=parseScopedPaths(paths);
+  const files=await readScopedFiles(root,scoped);
   const changes=await runBatchCodingTeam({
     goal,files:files.map(({path,text})=>({path,text})),
     call:(role,message,codeContext)=>callModel({
@@ -222,7 +232,7 @@ export async function runCloudCoder({
     throw new Error('Rama remota creada: '+branch+'. GitHub no pudo abrir el PR. Revisa permisos Actions para crear PR.');
   }
   return {branch,url:prUrl,files:changes.changes.map(c=>c.path),
-    modelCalls:changes.calls,reviewApproved:true};
+    modelCalls:changes.calls+selectionCalls,reviewApproved:true,selectedFiles:scoped};
 }
 async function main(){
   const options={

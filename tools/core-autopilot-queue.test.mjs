@@ -47,6 +47,15 @@ test('Large Core files may be approved with bounded line selectors',()=>{
   assert.equal(parseAutopilotIssue(issue(63,{goal:'Unsafe line selection',
     files:'apps/web/src/App.tsx#L1-L500,apps/web/src/agent.ts'})),null);
 });
+test('Only approved repository owners can delegate file selection to a scoper',()=>{
+  const accepted=issue(61,{goal:'Find relevant files and update the component',files:'auto'});
+  assert.deepEqual(parseAutopilotIssue(accepted),{
+    number:61,goal:'Find relevant files and update the component',files:'auto'
+  });
+  assert.equal(parseAutopilotIssue(issue(62,{
+    goal:'Find relevant files and edit them',files:'auto'
+  },{author_association:'NONE'})),null);
+});
 test('Autopilot caps daily paid tasks and processes oldest approved one first',()=>{
   const tasks=[task(8),task(2),task(7)];
   assert.equal(chooseAutopilotIssue(tasks,0,2).number,2);

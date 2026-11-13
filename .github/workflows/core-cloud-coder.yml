@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       files:
-        description: "2-6 existing source files: src/ or apps/{web,api,remote}/src"
+        description: "2-6 source files or auto for approved agentic file selection"
         required: true
         type: string
   workflow_call:
@@ -125,6 +125,6 @@ jobs:
       - name: Test private runner authorization and isolation
         run: pnpm --filter @core/remote test && pnpm --filter @core/remote check
       - name: Test cloud coder and scheduled autopilot controls
-        run: node --experimental-strip-types --test tools/cloud-code-agent.test.mjs tools/core-autopilot-queue.test.mjs
+        run: node --experimental-strip-types --test tools/cloud-code-agent.test.mjs tools/core-autopilot-queue.test.mjs tools/repository-scope.test.mjs
       - name: Test companion authentication without real credentials
         run: node --test tools/chatgpt-companion/test.mjs

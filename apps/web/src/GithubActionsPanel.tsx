@@ -102,9 +102,11 @@ export default function GithubActionsPanel({repo,token,onNotice}:{
         <label htmlFor="core-cloud-goal">Objetivo del desarrollo</label>
         <textarea id="core-cloud-goal" rows={3} maxLength={1600} className="dialog-text-input"
           placeholder="Explica qué debe corregir o mejorar el agente" value={cloudGoal} onChange={e=>setCloudGoal(e.target.value)}/>
-        <label htmlFor="core-cloud-files">2–6 rutas existentes bajo src/ (separadas por comas)</label>
-        <input id="core-cloud-files" maxLength={700} className="dialog-text-input"
-          placeholder="src/main.ts,src/main.test.ts" value={cloudFiles} onChange={e=>setCloudFiles(e.target.value)}/>
+        <label htmlFor="core-cloud-files">Dos a seis archivos de código, o auto para selección mediante IA</label>
+        <input id="core-cloud-files" maxLength={900} className="dialog-text-input"
+          placeholder="auto o apps/web/src/App.tsx#L100-L170,apps/web/src/agent.ts" value={cloudFiles} onChange={e=>setCloudFiles(e.target.value)}/>
+        <button className="secondary-button" type="button" onClick={()=>setCloudFiles("auto")}>Seleccionar archivos con subagentes</button>
+        {cloudFiles.trim().toLowerCase()==="auto"&&<p>Selección automática: autorizarás al subagente a elegir entre dos y seis módulos de código rastreados por Git. No podrá acceder a rutas privadas u ocultas. Puede requerir una llamada adicional al proveedor de IA.</p>}
         <p>En GitHub configura el secreto CORE_AGENT_API_KEY y, opcionalmente, las variables CORE_AGENT_PROVIDER y CORE_AGENT_MODEL. Activa permiso para crear PR mediante Actions. El código de los archivos seleccionados se envía al proveedor de IA configurado. Consume tokens y minutos de CI; revisa los archivos y el PR antes de autorizar.</p>
       </div>}
       <button className="primary-button" type="button" disabled={busy||loading||autopilot||(cloudCoder&&(!cloudGoal.trim()||!cloudFiles.trim()))} onClick={()=>void run()}>

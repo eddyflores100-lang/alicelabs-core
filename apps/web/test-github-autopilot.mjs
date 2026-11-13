@@ -32,6 +32,12 @@ test('Autopilot issue inputs strictly restrict scope',()=>{
   ])assert.throws(()=>validateAutopilotGoal('Review existing files',files));
   assert.throws(()=>validateAutopilotGoal('bad','src/a.ts,src/b.ts'));
 });
+test('Approved autopilot tasks may authorize bounded automatic repository selection',()=>{
+  assert.deepEqual(validateAutopilotGoal('Find relevant modules automatically','auto'),
+    {goal:'Find relevant modules automatically',files:'auto'});
+  assert.deepEqual(validateAutopilotGoal('Find relevant modules automatically',' AUTO '),
+    {goal:'Find relevant modules automatically',files:'auto'});
+});
 test('Owner queue Issue is explicitly labeled and uses a typed JSON body',async()=>{
   const request=async(url,init)=>{
     if(String(url)==='https://api.github.com/repos/alice-labs/core/labels/core-agent%3Aapproved'){

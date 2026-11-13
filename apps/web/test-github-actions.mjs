@@ -120,6 +120,18 @@ test('Cloud Coder dispatch rejects invalid task sizes and escaped paths without 
 });
 
 
+test('Owner may explicitly authorize automatic source discovery for manual Cloud Coder',async()=>{
+  const request=async(url,init)=>{
+    assert.equal(init.method,'POST');
+    assert.deepEqual(JSON.parse(init.body),{
+      ref:'main',inputs:{goal:'Find modules and fix the bug',files:'auto'}
+    });
+    return new Response(null,{status:204});
+  };
+  assert.deepEqual(await dispatchGithubCloudCoder(
+    repo,token,10,'Find modules and fix the bug','AUTO',request
+  ),{accepted:true,runId:null,url:null});
+});
 test('Cloud coding workflows are recognized by exact official or reusable wrapper path',()=>{
   assert.equal(isCloudCoderWorkflow({path:'.github/workflows/core-cloud-coder.yml'}),true);
   assert.equal(isCloudCoderWorkflow({path:'.github/workflows/cloud-coder.yml'}),true);

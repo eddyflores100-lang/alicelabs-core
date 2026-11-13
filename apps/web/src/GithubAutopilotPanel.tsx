@@ -70,7 +70,7 @@ export default function GithubAutopilotPanel({repo,token,onNotice}:{
     if(enable&&!installation?.installed){onNotice('Instala primero el workflow del repositorio.',true);return;}
     if(enable && !window.confirm(
       '¿ACTIVAR el autopiloto de GitHub cada cinco minutos para este repositorio?\n\n'+
-      'Solo ejecutará tareas de Issues aprobados. Hasta '+limit+' tareas de IA por día UTC, con un máximo de cinco solicitudes al proveedor por tarea. '+
+      'Solo ejecutará tareas de Issues aprobados. Hasta '+limit+' tareas de IA por día UTC, con un máximo de seis solicitudes al proveedor por tarea. '+
       'Cada tarea puede consumir tokens y minutos facturables. '+
       'Debes configurar CORE_AGENT_API_KEY y permitir PRs de GitHub Actions. No fusiona PRs automáticamente.'))
       return;
@@ -88,7 +88,7 @@ export default function GithubAutopilotPanel({repo,token,onNotice}:{
   }
   async function submitTask(){
     if(busy||!goal.trim()||!files.trim())return;
-    if(!window.confirm('¿Crear un Issue de GitHub aprobado para que Core pueda modificar los archivos seleccionados cuando el autopiloto esté habilitado?\n\n'+goal.trim().slice(0,160)+'\n\nLos nombres de archivos y el objetivo se guardarán en GitHub; el trabajo puede consumir API y minutos facturables.'))return;
+    if(!window.confirm('¿Crear un Issue de GitHub aprobado para que Core pueda modificar los archivos seleccionados cuando el autopiloto esté habilitado?\n\n'+goal.trim().slice(0,160)+(files.trim().toLowerCase()==='auto'?'\n\nPermiso AUTO: el agente elegirá archivos de código dentro de las rutas autorizadas.':'')+'\n\nLos nombres de archivos y el objetivo se guardarán en GitHub; el trabajo puede consumir API y minutos facturables.'))return;
     setBusy(true);
     try{
       const created=await createApprovedAutopilotIssue(repo,token,goal,files);
@@ -138,9 +138,11 @@ export default function GithubAutopilotPanel({repo,token,onNotice}:{
       <label htmlFor="core-auto-goal">Objetivo</label>
       <textarea id="core-auto-goal" rows={3} className="dialog-text-input" maxLength={1600}
         placeholder="Corrige una función y actualiza su prueba" value={goal} onChange={e=>setGoal(e.target.value)}/>
-      <label htmlFor="core-auto-files">2–6 archivos existentes bajo src/</label>
+      <label htmlFor="core-auto-files">Dos a seis archivos o auto para selección mediante IA</label>
       <input id="core-auto-files" className="dialog-text-input" maxLength={900}
-        placeholder="apps/web/src/App.tsx#L100-L180,apps/web/src/agent.ts" value={files} onChange={e=>setFiles(e.target.value)}/>
+        placeholder="auto o apps/web/src/App.tsx#L120-L180,apps/web/src/agent.ts" value={files} onChange={e=>setFiles(e.target.value)}/>
+      <button className="secondary-button" type="button" disabled={busy} onClick={()=>setFiles("auto")}>Permitir que los subagentes elijan archivos</button>
+      {files.trim().toLowerCase()==="auto"&&<p>Este permiso permite seleccionar hasta seis archivos rastreados por Git dentro de src/, apps/web/src/, apps/api/src/ y apps/remote/src/. El subagente recibe solo un índice acotado; la edición se revisa mediante PR. Se añade una llamada al proveedor de IA.</p>}
       <button className="secondary-button" type="button" disabled={busy||!goal.trim()||!files.trim()}
         onClick={()=>void submitTask()}><CheckCircle2 size={14}/> Crear tarea aprobada en GitHub</button>
       {issueLink&&<a href={issueLink} rel="noopener noreferrer" target="_blank">Ver tarea recién creada <ExternalLink size={13}/></a>}
