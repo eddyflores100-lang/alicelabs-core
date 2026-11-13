@@ -2,7 +2,7 @@ import {useCallback,useEffect,useMemo,useState} from 'react';
 import {CheckCircle2,CircleAlert,Clock3,Cloud,ExternalLink,Play,RefreshCw,Square,Workflow} from 'lucide-react';
 import type {GithubRepoInfo} from './githubWorkspace';
 import {
-  cancelGithubRun,dispatchGithubWorkflow,listGithubRuns,listGithubWorkflows
+  cancelGithubRun,dispatchGithubWorkflow,dispatchGithubCloudCoder,isCloudCoderWorkflow,listGithubRuns,listGithubWorkflows
 } from './githubActions';
 import type {GithubWorkflow,GithubWorkflowRun} from './githubActions';
 
@@ -26,7 +26,10 @@ export default function GithubActionsPanel({repo,token,onNotice}:{
   const [busy,setBusy]=useState(false);
   const [loading,setLoading]=useState(false);
   const [dispatchLink,setDispatchLink]=useState<string|null>(null);
+  const [cloudGoal,setCloudGoal]=useState('');
+  const [cloudFiles,setCloudFiles]=useState('');
   const selected=useMemo(()=>workflows.find(w=>w.id===selectedId)||null,[workflows,selectedId]);
+  const cloudCoder=isCloudCoderWorkflow(selected);
   const load=useCallback(async()=>{
     if(!token)return;
     setLoading(true);
@@ -53,12 +56,13 @@ export default function GithubActionsPanel({repo,token,onNotice}:{
   },[selectedId,refreshRuns]);
   async function run(){
     if(!selected||busy||!token)return;
-    const confirmText='¿Ejecutar el workflow "'+selected.name+'" en '+
+    const confirmText=(cloudCoder?'¿Lanzar al equipo autónomo de Core para proponer cambios en '+cloudFiles+'?\nObjetivo: '+cloudGoal.slice(0,160):'¿Ejecutar el workflow "'+selected.name+'"')+' en '+
       repo.owner+'/'+repo.repo+' (rama '+repo.branch+')?\n\nGitHub Actions ejecutará instrucciones existentes en el repositorio, que pueden consumir minutos facturables, desplegar servicios o utilizar secretos de GitHub. Confirma solo si conoces este workflow.';
     if(!window.confirm(confirmText))return;
     setBusy(true);
     try{
-      const result=await dispatchGithubWorkflow(repo,token,selected.id);
+      const result=cloudCoder?await dispatchGithubCloudCoder(repo,token,selected.id,cloudGoal,cloudFiles):
+        await dispatchGithubWorkflow(repo,token,selected.id);
       setDispatchLink(result.url);
       onNotice(result.runId?'GitHub aceptó la ejecución #'+result.runId:'GitHub aceptó la solicitud; consulta las ejecuciones recientes.');
       await refreshRuns();
@@ -90,7 +94,17 @@ export default function GithubActionsPanel({repo,token,onNotice}:{
     </select>
     {selected&&<div className="github-actions-details">
       <p><Workflow size={14}/> {selected.path}</p>
-      <button className="primary-button" type="button" disabled={busy||loading} onClick={()=>void run()}>
+      {cloudCoder&&<div className="github-cloud-coder-form">
+        <p><strong>Core Cloud Coder</strong> ejecuta agentes planificador → programador → revisor en GitHub, crea una rama y abre un PR. No fusiona ni ejecuta el código generado con secretos presentes.</p>
+        <label htmlFor="core-cloud-goal">Objetivo del desarrollo</label>
+        <textarea id="core-cloud-goal" rows={3} maxLength={1600} className="dialog-text-input"
+          placeholder="Explica qué debe corregir o mejorar el agente" value={cloudGoal} onChange={e=>setCloudGoal(e.target.value)}/>
+        <label htmlFor="core-cloud-files">2–6 rutas existentes bajo src/ (separadas por comas)</label>
+        <input id="core-cloud-files" maxLength={700} className="dialog-text-input"
+          placeholder="src/main.ts,src/main.test.ts" value={cloudFiles} onChange={e=>setCloudFiles(e.target.value)}/>
+        <p>En GitHub configura el secreto CORE_AGENT_API_KEY y, opcionalmente, las variables CORE_AGENT_PROVIDER y CORE_AGENT_MODEL. Activa permiso para crear PR mediante Actions. El código de los archivos seleccionados se envía al proveedor de IA configurado. Consume tokens y minutos de CI; revisa los archivos y el PR antes de autorizar.</p>
+      </div>}
+      <button className="primary-button" type="button" disabled={busy||loading||(cloudCoder&&(!cloudGoal.trim()||!cloudFiles.trim()))} onClick={()=>void run()}>
         <Play size={14}/> {busy?'Procesando…':'Ejecutar workflow con confirmación'}
       </button>
       {dispatchLink&&<a href={dispatchLink} target="_blank" rel="noopener noreferrer">Abrir ejecución solicitada <ExternalLink size={13}/></a>}

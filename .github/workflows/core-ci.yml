@@ -36,5 +36,7 @@ jobs:
         run: pnpm test:worker
       - name: Test remote runner policy without deployment
         run: pnpm --filter @core/remote test && pnpm --filter @core/remote check
+      - name: Test independent Core Cloud Coder (no real credentials)
+        run: node --experimental-strip-types --test tools/cloud-code-agent.test.mjs
       - name: Test ChatGPT companion pairing (mock, no credentials)
         run: node --test tools/chatgpt-companion/test.mjs

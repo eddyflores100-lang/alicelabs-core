@@ -1,0 +1,101 @@
+name: Core Cloud Coder
+
+on:
+  workflow_dispatch:
+    inputs:
+      goal:
+        description: "Coding goal (do not enter secrets)"
+        required: true
+        type: string
+      files:
+        description: "2-6 existing src/ files separated by commas"
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      goal:
+        required: true
+        type: string
+      files:
+        required: true
+        type: string
+    secrets:
+      CORE_AGENT_API_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  propose:
+    name: Multi-agent proposal and reviewed PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      branch: ${{ steps.coder.outputs.core_branch }}
+      pr: ${{ steps.coder.outputs.core_pr }}
+    env:
+      CORE_TASK_GOAL: ${{ inputs.goal }}
+      CORE_TASK_FILES: ${{ inputs.files }}
+      CORE_AGENT_API_KEY: ${{ secrets.CORE_AGENT_API_KEY }}
+      CORE_AGENT_PROVIDER: ${{ vars.CORE_AGENT_PROVIDER || 'openai' }}
+      CORE_AGENT_MODEL: ${{ vars.CORE_AGENT_MODEL || 'gpt-4.1-mini' }}
+      GITHUB_TOKEN: ${{ github.token }}
+      GITHUB_REF_NAME: ${{ github.event.repository.default_branch }}
+    steps:
+      - name: Check out the selected project
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Load AliceLabs Core coding engine
+        uses: actions/checkout@v4
+        with:
+          repository: eddyflores100-lang/alicelabs-core
+          ref: main
+          path: .alice-core-agent
+          persist-credentials: false
+      - name: Install Node.js for the agent
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Generate reviewed changes and PR
+        id: coder
+        run: node --experimental-strip-types .alice-core-agent/tools/cloud-code-agent.mjs
+      - name: Link the PR
+        if: success()
+        env:
+          CORE_PR_URL: ${{ steps.coder.outputs.core_pr }}
+        run: |
+          echo "## AliceLabs Core Cloud Agent" >> "$GITHUB_STEP_SUMMARY"
+          echo "Proposal: $CORE_PR_URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "No generated source was executed in the credentials-bearing job." >> "$GITHUB_STEP_SUMMARY"
+
+  verify-core:
+    name: CI on generated branch (no model secrets)
+    needs: propose
+    if: ${{ needs.propose.outputs.branch != '' && github.repository == 'eddyflores100-lang/alicelabs-core' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.propose.outputs.branch }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+      - name: Install isolated dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build web project
+        run: pnpm web:build
+      - name: Run isolated checks
+        run: pnpm test:web && pnpm test:worker

@@ -68,6 +68,32 @@ export async function dispatchGithubWorkflow(repo:GithubRepoInfo,token:string,id
     url:safeRunUrl(response?.html_url,repo)
   };
 }
+export function isCloudCoderWorkflow(workflow:GithubWorkflow|null):boolean{
+  return Boolean(workflow&&
+    /^\.github\/workflows\/(?:core-)?cloud-coder\.ya?ml$/i.test(workflow.path));
+}
+export async function dispatchGithubCloudCoder(repo:GithubRepoInfo,token:string,id:number,
+  goal:string,files:string,request:GithubFetch=fetch):Promise<GithubDispatchResult>{
+  workflowId(id);
+  const task=goal.trim();
+  if(task.length<5||task.length>1600)throw new Error('El objetivo debe tener entre 5 y 1600 caracteres.');
+  if(files.length>700)throw new Error('Selección de archivos demasiado grande.');
+  const paths=files.split(',').map(x=>x.trim()).filter(Boolean);
+  if(paths.length<2||paths.length>6||paths.some(x=>!x.startsWith('src/')||
+     x.startsWith('/')||x.includes('..')||x.includes('\\')||
+     !/\.(ts|tsx|js|jsx|css|md|json|py|go|rs|html)$/i.test(x))||
+     new Set(paths).size!==paths.length)
+    throw new Error('Selecciona de 2 a 6 archivos existentes bajo src/ separados por comas.');
+  const response=await api<{workflow_run_id?:number;html_url?:string}>(repo,token,
+    '/actions/workflows/'+id+'/dispatches','POST',{
+      ref:repo.branch,inputs:{goal:task,files:paths.join(',')}
+    },request);
+  if(response && response.workflow_run_id!==undefined&&
+     (!Number.isSafeInteger(response.workflow_run_id)||response.workflow_run_id<=0))
+    throw new Error('GitHub devolvió un identificador inválido.');
+  return {accepted:true,runId:response?.workflow_run_id||null,
+    url:safeRunUrl(response?.html_url,repo)};
+}
 export async function listGithubRuns(repo:GithubRepoInfo,token:string,id:number,request:GithubFetch=fetch):Promise<GithubWorkflowRun[]>{
   workflowId(id);
   const response=await api<{workflow_runs?:GithubWorkflowRun[]}>(repo,token,
