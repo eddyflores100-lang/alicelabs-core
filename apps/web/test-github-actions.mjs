@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {listGithubWorkflows,dispatchGithubWorkflow,listGithubRuns,cancelGithubRun} from './src/githubActions.ts';
+import {listGithubWorkflows,dispatchGithubWorkflow,dispatchGithubCloudCoder,isCloudCoderWorkflow,listGithubRuns,cancelGithubRun} from './src/githubActions.ts';
 const repo={owner:'alice-labs',repo:'core-demo',branch:'main',private:true};
 const token='github_pat_test_token_with_actions_permission';
 function json(status,content){
@@ -83,4 +83,46 @@ test('Cancellation accepts GitHub HTTP 202 without a JSON body',async()=>{
     return new Response(null,{status:202});
   };
   assert.equal(await cancelGithubRun(repo,token,83,request),true);
+});
+
+test('Core Cloud Coder dispatch sends bounded goal and file allowlist only to GitHub',async()=>{
+  const request=async(url,init)=>{
+    assert.equal(String(url),'https://api.github.com/repos/alice-labs/core-demo/actions/workflows/10/dispatches');
+    assert.equal(init.method,'POST');
+    assert.equal(new Headers(init.headers).get('Authorization'),'Bearer '+token);
+    assert.deepEqual(JSON.parse(init.body),{
+      ref:'main',inputs:{goal:'Refactor two files and update the tests',files:'src/a.ts,src/b.test.ts'}
+    });
+    return new Response(null,{status:204});
+  };
+  const result=await dispatchGithubCloudCoder(
+    repo,token,10,'Refactor two files and update the tests',
+    ' src/a.ts , src/b.test.ts ',request
+  );
+  assert.deepEqual(result,{accepted:true,runId:null,url:null});
+});
+test('Cloud Coder dispatch rejects invalid task sizes and escaped paths without network calls',async()=>{
+  let called=0;
+  const request=async()=>{called++;throw Error('Should not call API');};
+  const cases=[
+    ['no','src/a.ts,src/b.ts'],
+    ['x'.repeat(1601),'src/a.ts,src/b.ts'],
+    ['Update source files','src/a.ts,../secrets.ts'],
+    ['Update source files','src/a.ts,src/a.ts'],
+    ['Update source files','src/a.ts'],
+    ['Update source files','src/a.ts,src/.env'],
+    ['Update source files','src/a.ts,src\\bad.ts']
+  ];
+  for(const [goal,files] of cases){
+    await assert.rejects(dispatchGithubCloudCoder(repo,token,10,goal,files,request));
+  }
+  assert.equal(called,0);
+});
+
+
+test('Cloud coding workflows are recognized by exact official or reusable wrapper path',()=>{
+  assert.equal(isCloudCoderWorkflow({path:'.github/workflows/core-cloud-coder.yml'}),true);
+  assert.equal(isCloudCoderWorkflow({path:'.github/workflows/cloud-coder.yml'}),true);
+  assert.equal(isCloudCoderWorkflow({path:'.github/workflows/build.yml'}),false);
+  assert.equal(isCloudCoderWorkflow(null),false);
 });

@@ -417,3 +417,9 @@
 .diff-actions{flex-wrap:wrap}
 .diff-actions a{font-size:12px;color:var(--accent,#8fc1ff);text-decoration:underline;overflow-wrap:anywhere}
 @media(max-width:900px){.batch-file-tabs{max-height:110px}.batch-review-confirm{font-size:11px}.diff-actions{gap:7px}}
+
+/* Core Cloud Coder: explicit goals and file scope on authorized GitHub workflow */
+.github-cloud-coder-form{display:grid;gap:9px;padding:12px;border:1px solid var(--border,#394354);border-radius:9px}
+.github-cloud-coder-form p{font-size:12px;line-height:1.5;margin:3px 0}
+.github-cloud-coder-form label{font-size:12px;font-weight:600}
+.github-cloud-coder-form textarea,.github-cloud-coder-form input{min-width:0;width:100%;max-width:100%;font-family:inherit}
