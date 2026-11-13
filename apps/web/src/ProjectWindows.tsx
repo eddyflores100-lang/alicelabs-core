@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowUpRight, FolderKanban, Plus, ShieldCheck, X } from 'lucide-react';
 import App from './App';
+import type {Connection} from './agent';
+import {OWNER_GRANTS_STORAGE_KEY,readGrantsFromJson} from './ownerGrants';
 import { deleteProjectSnapshot } from './projectSnapshots';
 
 type WindowInfo = { id: string; title: string; dirty: boolean };
 const KEY = 'alicelabs-core-windows-v1';
+const GRANT_KEY = OWNER_GRANTS_STORAGE_KEY;
 const selectedFromUrl = new URLSearchParams(window.location.search).get('project');
 const idValid = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value);
 function readWindows(): WindowInfo[] {
@@ -12,6 +15,9 @@ function readWindows(): WindowInfo[] {
     const raw = JSON.parse(localStorage.getItem(KEY) || '[]');
     return Array.isArray(raw) ? raw.filter(x => x && idValid(x.id) && typeof x.title === 'string').slice(0, 16).map(x => ({ id:x.id, title:x.title.slice(0, 80), dirty:false })) : [];
   } catch { return []; }
+}
+function readProjectGrants():Record<string,string[]>{
+  try{return readGrantsFromJson(localStorage.getItem(GRANT_KEY));}catch{return {};}
 }
 const firstWindow = { id: crypto.randomUUID(), title: 'Proyecto 1', dirty:false };
 const initialWindows = (() => {
@@ -28,12 +34,26 @@ function initialSelected(): string {
 
 export default function ProjectWindows() {
   const [windows, setWindows] = useState<WindowInfo[]>(initialWindows);
+  // Global owner account catalogue lives in RAM. Secret material is never saved here.
+  const [ownerConnections,setOwnerConnections]=useState<Connection[]>([]);
+  // Grants store only non-secret random profile identifiers for each isolated project.
+  const [projectGrants,setProjectGrants]=useState<Record<string,string[]>>(readProjectGrants);
   const [selected, setSelected] = useState(initialSelected);
   const [mounted, setMounted] = useState<string[]>(() => [initialSelected()]);
   const activeId = windows.some(x => x.id === selected) ? selected : windows[0].id;
   useEffect(() => {
     localStorage.setItem(KEY, JSON.stringify(windows.map(x => ({id:x.id,title:x.title}))));
   }, [windows]);
+  useEffect(()=>{
+    try{localStorage.setItem(GRANT_KEY,JSON.stringify(projectGrants));}catch{/* Storage unavailable */}
+  },[projectGrants]);
+  const setProjectGrant=useCallback((projectId:string,connectionId:string,enabled:boolean)=>{
+    setProjectGrants(prev=>{
+      const updated=new Set(prev[projectId]||[]);
+      if(enabled)updated.add(connectionId);else updated.delete(connectionId);
+      return {...prev,[projectId]:[...updated]};
+    });
+  },[]);
   useEffect(() => {
     sessionStorage.setItem('alicelabs-core-active-project', activeId);
     if (!mounted.includes(activeId)) setMounted(prev => [...prev,activeId]);
@@ -71,6 +91,7 @@ export default function ProjectWindows() {
     const next=rest.length?rest:[{id:crypto.randomUUID(),title:'Proyecto 1',dirty:false}];
     setWindows(next);
     setMounted(prev=>prev.filter(x=>x!==id));
+    setProjectGrants(prev=>{const next={...prev};delete next[id];return next;});
     if(activeId===id)setSelected(next[next.length-1].id);
     try {await deleteProjectSnapshot(id);} catch { /* local storage permissions vary */ }
   }
@@ -93,7 +114,9 @@ export default function ProjectWindows() {
     </nav>
     <div className="project-window-content">
       {mounted.map(id=>windows.some(p=>p.id===id) && <section key={id} className="project-window-instance" aria-label={'Proyecto '+(windows.find(p=>p.id===id)?.title||'')} hidden={id!==activeId}>
-        <App projectId={id} activeProject={id===activeId} onProjectTitle={title=>rename(id,title)} onDirtyChange={dirty=>markDirty(id,dirty)}/>
+        <App projectId={id} activeProject={id===activeId} onProjectTitle={title=>rename(id,title)} onDirtyChange={dirty=>markDirty(id,dirty)}
+          connections={ownerConnections} setConnections={setOwnerConnections} projectGrantIds={projectGrants[id]||[]}
+          onProjectGrant={(connectionId,enabled)=>setProjectGrant(id,connectionId,enabled)}/>
       </section>)}
     </div>
     <div className="project-window-status" role="status"><ShieldCheck size={13}/> {active?.title||'Proyecto'} · Sesión separada · Guardado local en este dispositivo</div>

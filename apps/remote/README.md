@@ -1,4 +1,4 @@
-# AliceLabs Core Remote Sandbox — deployment gated
+# AliceLabs Core Remote Sandbox â€” deployment gated
 
 **Status: source prototype validated with unit tests and Wrangler dry-run. NOT deployed. NOT connected to the production web IDE.**
 
@@ -31,7 +31,7 @@ Once provisioned:
 - `POST /v1/projects/:uuid/run`: `{ "bin":"git", "args":["status"], "approved":true }` from a human-approved UI action
 - `GET|PUT /v1/projects/:uuid/notify`: consent and notification configuration
 
-No background task scheduling, resumable jobs, public WebSockets, mobile push or independent coding agents have been implemented. Containers have resource/cost limits and should not be used as a disguised anonymous shell.
+A bounded durable task queue with per-project Cloudflare Durable Object alarms is now implemented and tested with mocks. It is not deployed or production-tested until Access and Containers are configured. No public WebSockets, mobile push service, or general autonomous coding agent is provided. Containers have resource/cost limits and should not be used as a disguised anonymous shell.
 
 ## Tests and dry run
 

@@ -2,6 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { validProject, safePath, safeCommand, safeText } from './policy.mjs';
 import { validOptIn, whatsappReady, notifyWhatsApp } from './whatsapp.mjs';
 import {validEncryptedVault} from './vault.mjs';
+import {TASK_ACTIONS,validateTaskRequest,createTask,recordTaskStep,sanitizedTask} from './projectTasks.mjs';
 
 const ORIGINS = new Set(['https://alicelabs-core.pages.dev', 'http://localhost', 'https://localhost', 'capacitor://localhost']);
 function allowedOrigin(value) {
@@ -58,7 +59,7 @@ export default {
       if(allow){headers.set('Access-Control-Allow-Origin',allow);headers.set('Access-Control-Allow-Credentials','true');}
       return new Response(result.body,{status:result.status,headers});
     }
-    const match=url.pathname.match(/^\/v1\/projects\/([a-f0-9-]{36})\/(status|run|notify|files(?:\/.*)?)$/i);
+    const match=url.pathname.match(/^\/v1\/projects\/([a-f0-9-]{36})\/(status|run|notify|tasks(?:\/[a-f0-9-]{36}(?:\/cancel)?)?|files(?:\/.*)?)$/i);
     if(!match||!validProject(match[1]))return responseJson({error:'Proyecto inválido'},404,allow);
     const action=match[2];
     if(action==='run') {
@@ -70,6 +71,22 @@ export default {
       if(!command)return responseJson({error:'Comando no permitido o sin autorización explícita'},400,allow);
       request=new Request('https://internal.local/run',{method:'POST',body:JSON.stringify(command),
         headers:{'Content-Type':'application/json'}});
+    } else if(action.startsWith('tasks')) {
+      const validRoute=/^tasks(?:\/[a-f0-9-]{36}(?:\/cancel)?)?$/i.test(action);
+      if(!validRoute)return responseJson({error:'Ruta de tarea inválida'},404,allow);
+      const create=action==='tasks'&&request.method==='POST';
+      const cancel=action.endsWith('/cancel')&&request.method==='POST';
+      const remove=/^tasks\/[a-f0-9-]{36}$/i.test(action)&&request.method==='DELETE';
+      const read=request.method==='GET'&&!action.endsWith('/cancel');
+      if(!create&&!cancel&&!read&&!remove)return responseJson({error:'Método inválido'},405,allow);
+      if(create){
+        const raw=await request.text();
+        if(raw.length>2200)return responseJson({error:'Plan demasiado grande'},413,allow);
+        let value;try{value=JSON.parse(raw);}catch{return responseJson({error:'Plan JSON inválido'},400,allow);}
+        const plan=validateTaskRequest(value);
+        if(!plan)return responseJson({error:'Plan inválido o no aprobado'},400,allow);
+        request=new Request('https://internal.local/tasks',{method:'POST',body:JSON.stringify(plan)});
+      } else request=new Request('https://internal.local/'+action,{method:request.method});
     } else if(action==='notify') {
       if(request.method!=='GET' && request.method!=='PUT')return responseJson({error:'Método inválido'},405,allow);
       if(request.method==='PUT') {
@@ -128,6 +145,41 @@ export class ProjectSandbox extends DurableObject {
       }
       return responseJson({error:'Método no permitido'},405);
     }
+    if(path==='/tasks' && request.method==='GET'){
+      const records=await this.ctx.storage.list({prefix:'task:'});
+      return responseJson({ok:true,tasks:[...records.values()].filter(x=>x&&x.id).map(sanitizedTask).sort((a,b)=>b.createdAt-a.createdAt).slice(0,30)});
+    }
+    if(path==='/tasks' && request.method==='POST'){
+      const spec=validateTaskRequest({...await request.json(),approved:true});
+      if(!spec)return responseJson({error:'Plan inválido'},400);
+      const records=await this.ctx.storage.list({prefix:'task:'});
+      if(records.size>=30)return responseJson({error:'Límite de 30 tareas; elimina tareas anteriores antes de continuar'},409);
+      const job=createTask(spec,crypto.randomUUID());
+      await this.ctx.storage.put('task:'+job.id,job);
+      await this.ctx.storage.setAlarm(Date.now()+100);
+      return responseJson({ok:true,task:sanitizedTask(job)},202);
+    }
+    const taskMatch=path.match(/^\/tasks\/([a-f0-9-]{36})(\/cancel)?$/i);
+    if(taskMatch){
+      const key='task:'+taskMatch[1];
+      const task=await this.ctx.storage.get(key);
+      if(!task)return responseJson({error:'Tarea no encontrada'},404);
+      if(request.method==='GET'&&!taskMatch[2])return responseJson({ok:true,task:sanitizedTask(task)});
+      if(request.method==='DELETE'&&!taskMatch[2]){
+        if(['queued','running'].includes(task.status))return responseJson({error:'No se puede eliminar una tarea pendiente'},409);
+        await this.ctx.storage.delete(key);
+        return responseJson({ok:true,deleted:true});
+      }
+      if(request.method==='POST'&&taskMatch[2]){
+        if(task.status==='queued'){
+          const cancelled={...task,status:'cancelled',updatedAt:Date.now()};
+          await this.ctx.storage.put(key,cancelled);
+          return responseJson({ok:true,task:sanitizedTask(cancelled)});
+        }
+        return responseJson({error:'La tarea ya inició o terminó; no se puede cancelar el comando en ejecución'},409);
+      }
+      return responseJson({error:'Método inválido'},405);
+    }
     if(path==='/status'){
       const map=await this.ctx.storage.list({prefix:'file:'});
       return responseJson({ok:true,files:map.size,running:!!this.ctx.container?.running,isolated:true});
@@ -179,6 +231,41 @@ export class ProjectSandbox extends DurableObject {
     }
     return responseJson({error:'Ruta desconocida'},404);
   }
+  async alarm(){
+    const jobs=await this.ctx.storage.list({prefix:'task:'});
+    const active=[...jobs.values()].filter(x=>x&&['queued','running'].includes(x.status))
+      .sort((a,b)=>a.createdAt-b.createdAt);
+    if(!active.length)return;
+    const task=active[0];
+    const key='task:'+task.id;
+    if(task.status==='running'){
+      await this.ctx.storage.put(key,{...task,status:'failed',updatedAt:Date.now(),error:'Ejecución interrumpida: requiere revisión manual antes de reintentar'});
+    } else {
+      await this.ctx.storage.put(key,{...task,status:'running',updatedAt:Date.now()});
+      let result;
+      try {
+        const selected=TASK_ACTIONS[task.steps[task.current]];
+        if(!selected)throw Error('Paso no permitido');
+        const step=this.runTail.then(()=>this.execute({...selected,approved:true},false));
+        this.runTail=step.catch(()=>{});
+        const response=await step;
+        if(!response.ok)throw Error('El contenedor no pudo completar el paso');
+        result=await response.json();
+      } catch(error){result={ok:false,exitCode:null,output:String(error.message||error).slice(0,400)};}
+      const next=recordTaskStep(task,task.steps[task.current],result);
+      await this.ctx.storage.put(key,next);
+      if(next.status==='completed'&&whatsappReady(this.env)){
+        const settings=await this.ctx.storage.get('notification:settings');
+        const last=Number(await this.ctx.storage.get('notification:last')||0);
+        if(settings?.enabled&&settings.optIn&&Date.now()-last>60000){
+          await this.ctx.storage.put('notification:last',Date.now());
+          this.ctx.waitUntil(notifyWhatsApp(this.env,settings,task.id.slice(0,8),'tarea finalizada').catch(()=>({sent:false})));
+        }
+      }
+    }
+    const pending=await this.ctx.storage.list({prefix:'task:'});
+    if([...pending.values()].some(x=>x?.status==='queued'))await this.ctx.storage.setAlarm(Date.now()+250);
+  }
   async boot() {
     if(!this.ctx.container)throw Error('Cloudflare Containers no está habilitado');
     if(this.ctx.container.running)return;
@@ -208,7 +295,7 @@ export class ProjectSandbox extends DurableObject {
     })().finally(()=>{this.starting=null;});
     return this.starting;
   }
-  async execute(command) {
+  async execute(command,shouldNotify=true) {
     await this.boot();
     const port=this.ctx.container.getTcpPort(PORT);
     const run=await port.fetch('http://container/run',{method:'POST',
@@ -225,7 +312,7 @@ export class ProjectSandbox extends DurableObject {
         for(const [path,text] of Object.entries(data.files))if(safePath(path)&&safeText(text)!==null)await this.ctx.storage.put('file:'+path,text);
       }
     }
-    if(run.ok&&whatsappReady(this.env)){
+    if(shouldNotify&&run.ok&&whatsappReady(this.env)){
       let result;try{result=JSON.parse(output);}catch{result={};}
       if(result.ok){
         const settings=await this.ctx.storage.get('notification:settings');

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test test.mjs",
+    "test": "node --test test.mjs projectTasks.test.mjs runtime.test.mjs",
     "check": "node --check src/index.js && node --check container/server.mjs",
     "deploy": "wrangler deploy"
   },
