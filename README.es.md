@@ -2,7 +2,7 @@
 <img src="apps/web/public/icon-192.png" width="86" alt="AliceLabs Core"/>
 <h1>AliceLabs Core</h1>
 <p><strong>Un espacio de desarrollo con IA, abierto, local y centrado en tus permisos.</strong></p>
-<p><a href="https://alicelabs-core.pages.dev"><strong>Abrir la IDE</strong></a> · <a href="README.md">English</a> · <a href="docs/ARCHITECTURE.md">Arquitectura</a> · <a href="CONTRIBUTING.md">Contribuir</a></p>
+<p><a href="https://alicelabs-core.pages.dev"><strong>Abrir la IDE</strong></a> · <a href="https://github.com/eddyflores100-lang/alicelabs-core/releases/download/v0.7.0-preview/AliceLabs-Core-Android-v0.7.0-preview.apk"><strong>Descargar APK Android (prueba)</strong></a> · <a href="README.md">English</a> · <a href="docs/ARCHITECTURE.md">Arquitectura</a> · <a href="CONTRIBUTING.md">Contribuir</a></p>
 </div>
 
 ![AliceLabs Core escritorio](docs/assets/core-desktop.png)

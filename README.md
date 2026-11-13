@@ -5,6 +5,7 @@
   <p>Open-source · React + Monaco · Cloudflare Pages & Workers · Experimental Tauri desktop</p>
   <p>
     <a href="https://alicelabs-core.pages.dev"><strong>Launch Web IDE</strong></a> ·
+    <a href="https://github.com/eddyflores100-lang/alicelabs-core/releases/download/v0.7.0-preview/AliceLabs-Core-Android-v0.7.0-preview.apk"><strong>Android APK (preview)</strong></a> ·
     <a href="README.es.md">Español</a> ·
     <a href="docs/ARCHITECTURE.md">Architecture</a> ·
     <a href="CONTRIBUTING.md">Contribute</a>
