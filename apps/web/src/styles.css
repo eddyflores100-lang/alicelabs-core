@@ -65,3 +65,43 @@
 .connection-form{display:flex;flex-direction:column;gap:9px;border-top:1px solid #333b4c;margin-top:4px;padding-top:12px}.connection-form label{margin:0;font-size:11px;font-weight:700;color:#cad3e4}.connection-form .provider-grid{margin-bottom:3px}
 .add-account-button{align-self:flex-end;margin-top:6px}
 @media(max-width:600px){.settings-dialog{width:100%;max-height:91vh}.route-controls{grid-template-columns:1fr}.route-controls .route-model-control{grid-column:auto}.accounts-head{align-items:flex-start;flex-direction:column}.account-actions .quota-hint{display:none}.context-options{gap:7px}.context-options .file-context-toggle{font-size:9px}.guide-plan{padding:10px}}
+
+/* ChatGPT OAuth: distinct from API key routing; credentials stay in local companion. */
+.agent-auth-modes{display:flex;gap:4px;align-items:center;background:#111722;border-bottom:1px solid #28303d;padding:7px 11px;flex-shrink:0}
+.agent-auth-modes button{display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid transparent;border-radius:6px;color:#8995a8;font-size:11px;flex:1;justify-content:center;white-space:nowrap}
+.agent-auth-modes button:hover{background:#232b39;color:#e3e6f4}
+.agent-auth-modes button.mode-current{background:#302d4c;border-color:#65598b;color:#e5dcff}
+.siwc-link{display:flex;align-items:center;gap:12px;text-align:left;padding:12px;width:100%;border:1px solid #8a80d7;background:linear-gradient(120deg,#332d57,#25263e);border-radius:9px;color:#dacdff}
+.siwc-link:hover{background:linear-gradient(120deg,#473c78,#323154)}
+.siwc-link svg:first-child{flex-shrink:0}.siwc-link>span{display:flex;flex-direction:column;gap:4px;flex:1}.siwc-link strong{font-size:12px}.siwc-link small{font-size:10px;color:#b7aadb}
+.chatgpt-dialog{width:min(690px,96vw);max-height:min(92vh,940px)}
+.chatgpt-manager{display:flex;flex-direction:column;gap:13px;padding:17px 23px 23px;color:#bfc9d8}
+.chatgpt-manager p{line-height:1.7;margin:5px 0 0;color:#9daabd;font-size:11px}
+.chatgpt-intro{display:flex;gap:12px;align-items:flex-start;padding:13px;background:linear-gradient(120deg,#302d4e,#25273a);border-radius:10px;border:1px solid #494467}
+.chatgpt-emblem{width:40px;height:40px;border-radius:11px;background:#413b6a;color:#cbbdff;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.chatgpt-intro strong{display:block;font-size:13px;color:#f0eaff}
+.chatgpt-pair{border:1px solid #303949;border-radius:9px;background:#171e2a;display:flex;flex-direction:column;gap:9px;padding:13px}
+.chatgpt-step{display:flex;align-items:center;gap:9px;font-size:11px;color:#d1d8eb;font-weight:700}
+.chatgpt-step>span{display:flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:#393257;color:#dbd0ff;flex-shrink:0;font-size:10px}
+.chatgpt-pair-input{display:flex;align-items:center;gap:8px}.chatgpt-pair-input .input-with-icon{flex:1;min-width:0}.chatgpt-pair-input .primary-button{height:40px}
+.chatgpt-status{display:flex;align-items:center;gap:8px;font-size:10px;color:#a5adbd;background:#101721;padding:9px 10px;border-radius:6px}
+.chatgpt-status.connected{color:#b6e6d3}.chatgpt-status>span:last-child{margin-left:auto;color:#76849a;font-family:'JetBrains Mono',monospace;font-size:10px}
+.chatgpt-account-header{display:flex;align-items:center;justify-content:space-between;padding-top:2px}
+.chatgpt-account-header strong{font-size:12px;color:#eceefb}.chatgpt-account-header button{display:flex;align-items:center;gap:6px;font-size:10px;color:#a99cee;padding:6px}
+.chatgpt-account-list{max-height:210px;overflow:auto;display:flex;flex-direction:column;gap:6px}
+.chatgpt-account{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border:1px solid #323b4a;border-radius:8px;background:#1c2432}
+.chatgpt-account-selected{border-color:#9984e6;background:#29283e}.chatgpt-account-info{display:flex;align-items:center;gap:9px;min-width:0}
+.chatgpt-avatar{width:30px;height:30px;border:1px solid #595178;background:#302c4d;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#c8bbef;flex-shrink:0}
+.chatgpt-account-info>div:last-child{display:flex;flex-direction:column;gap:4px;min-width:0}
+.chatgpt-account-info strong{font-size:11px;color:#e4e9f4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chatgpt-account-info small{font-size:10px;color:#91a0b5}
+.chatgpt-account-actions{display:flex;gap:4px;flex-shrink:0}.chatgpt-account-actions button{height:29px;width:29px;display:flex;align-items:center;justify-content:center;border:1px solid #394254;background:#273042;color:#a8b3c7;border-radius:6px}.chatgpt-account-actions button:hover{background:#3c395a;color:white}
+.chatgpt-add{align-self:stretch;border-color:#675a97;color:#d5c8fb;min-height:39px;font-size:12px}
+.chatgpt-model-section{display:flex;flex-direction:column;gap:8px;border:1px solid #383e50;background:#1b2230;border-radius:8px;padding:11px}
+.chatgpt-model-section label{font-size:10px;font-weight:800;color:#bec7dc}.chatgpt-active-account{display:flex;align-items:center;gap:7px;color:#d9ddeb;font-size:11px}
+.chatgpt-model-section select{width:100%;padding:9px;background:#131a26;border:1px solid #414b5d;border-radius:7px;color:#e5e8f5;font-size:11px}
+.chatgpt-model-section p{margin:0;font-size:10px;color:#8995a8}
+.chatgpt-failure{padding:10px 12px;background:#452728!important;border:1px solid #78474b;border-radius:7px;color:#ffc6c6!important}
+.chatgpt-security{display:flex;align-items:flex-start;gap:9px;padding:10px;background:#202d2e;border:1px solid #3a5650;border-radius:8px;font-size:10px;line-height:1.7;color:#a6cbbd}
+.chatgpt-security svg{flex-shrink:0;color:#a0d4bc;margin-top:2px}
+@media(max-width:600px){.chatgpt-dialog{width:100%;max-height:91vh}.chatgpt-manager{padding:13px;gap:10px}.chatgpt-pair-input{flex-direction:column;align-items:stretch}.chatgpt-pair-input .primary-button{width:100%}.chatgpt-account{flex-wrap:wrap}.chatgpt-account-actions{margin-left:auto}.chatgpt-status>span:last-child{display:none}}

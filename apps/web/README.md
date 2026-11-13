@@ -61,3 +61,19 @@ Seguridad del Bridge: se escucha sólo en `127.0.0.1:39007`; requiere token alea
 Ejecutar las pruebas del backend: pnpm --filter @core/agent-worker test.
 
 Pruebas del selector de modelos: pnpm --filter @core/web test:routing (Node 24 recomendado).
+
+## ChatGPT por correo — sin clave API (v0.4, integración beta)
+
+AliceLabs Core incluye una conexión alternativa a las API keys: **Continuar con ChatGPT** mediante el flujo oficial OAuth para aplicaciones abiertas, sujeto a disponibilidad y elegibilidad del plan.
+
+1. En la raíz de este repositorio, inicia `node tools/chatgpt-companion/server.mjs` en tu propio equipo (Node.js 24).
+2. Abre https://alicelabs-core.pages.dev y selecciona `ChatGPT con correo` → `Conectar ChatGPT`.
+3. Pega el **token de emparejamiento local** que aparece en el terminal **solo dentro de la IDE**. No compartas el token ni la contraseña en chats.
+4. Pulsa `Continuar con ChatGPT`, completa la autenticación y los permisos en la **web oficial de OpenAI**, regresa a la IDE y pulsa `Actualizar`.
+5. Selecciona la cuenta y uno de los modelos que la cuenta tiene autorizados. Puedes añadir otras cuentas siguiendo el mismo procedimiento, con sesiones independientes.
+
+**Arquitectura y seguridad:** Pages muestra la interfaz, Workers sigue sirviendo el modo BYOK, y el componente `tools/chatgpt-companion` se encarga localmente del OAuth, tokens, modelos y respuestas ChatGPT, sin entregar las credenciales a Pages/Workers. Tokens únicamente en RAM; tras reiniciar el componente, vuelve a autenticar. No se usan cookies copiadas, contraseñas, proxies ni rotación automática para eludir límites. No da acceso a conversaciones existentes de ChatGPT. No todos los tipos de cuentas/planes son necesariamente elegibles.
+
+**Estado:** se ha probado el emparejamiento, restricciones de origen, creación de URL OAuth y build web. La autenticación de una cuenta real y la inferencia con su plan todavía requieren una autorización manual del titular; no se consideran verificadas de extremo a extremo.
+
+Ver [guía del componente ChatGPT](../../tools/chatgpt-companion/README.md).

@@ -72,3 +72,15 @@ node tools/local-bridge/server.mjs
 ```
 
 **Importante:** las carpetas locales se abren y guardan con permiso del navegador; GitHub público actualmente es de solo lectura. La IA puede proponer cambios en el archivo activo, pero no aplicarlos ni guardarlos sin aprobación. La terminal solo funciona con el Bridge local, token temporal y aprobación manual de cada comando. No se ejecuta shell desde Workers. Ver [guía web](apps/web/README.md).
+
+### ChatGPT con correo, sin clave API (beta)
+
+La versión web permite utilizar el flujo oficial **Sign in with ChatGPT** para aplicaciones de código abierto, a través de un componente local que preserva las credenciales fuera de Pages y Workers. Puedes registrar varias cuentas y seleccionar explícitamente cuál usar; no se evaden límites. Requiere una cuenta elegible y autorización individual.
+
+```bash
+node tools/chatgpt-companion/server.mjs
+```
+
+En la IDE, selecciona **ChatGPT con correo** y usa el token de emparejamiento mostrado únicamente en tu terminal. Las credenciales OAuth nunca se introducen en la web ni se almacenan en Cloudflare. Estado beta: el inicio de sesión real requiere probarlo con consentimiento de su titular.
+
+Más información: [Integración ChatGPT con correo](tools/chatgpt-companion/README.md).

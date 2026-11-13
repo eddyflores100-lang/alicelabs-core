@@ -20,11 +20,14 @@ import { discoverModels, pingWorker, requestAgent } from './agent';
 import type { ChatMessage, Provider, Connection, Guidance, GuideStep } from './agent';
 import { chooseRoute } from './routing';
 import type { Priority } from './routing';
+import ChatGPTPanel from './ChatGPTPanel';
+import { companionHealth, getChatGPTAccounts, getChatGPTModels, startChatGPTLogin, disconnectChatGPTAccount, runChatGPT } from './chatgpt';
+import type { ChatGPTAccount, ChatGPTModel } from './chatgpt';
 
 // Load Monaco from same-origin static assets; no CDN and no 7 MB bundler worker.
 loader.config({ paths: { vs: '/vs' } });
 type Section = 'files' | 'search' | 'changes' | 'activity';
-type Dialog = 'github' | 'new' | 'settings' | 'commands' | 'bridge' | 'diff' | null;
+type Dialog = 'github' | 'new' | 'settings' | 'chatgpt' | 'commands' | 'bridge' | 'diff' | null;
 type LogEntry = { id: number; time: string; level: 'info' | 'success' | 'error'; text: string };
 type TerminalResult = { id: number; command: string; output: string; exitCode: number | null };
 const LOCAL_BRIDGE = 'http://127.0.0.1:39007';
@@ -95,6 +98,15 @@ export default function App() {
   const [selectedProfile, setSelectedProfile] = useState('auto');
   const [selectedModel, setSelectedModel] = useState('auto');
   const [lastRoute, setLastRoute] = useState<{ model: string; provider: Provider; profile: string; reason: string } | null>(null);
+  const [authMode, setAuthMode] = useState<'chatgpt' | 'api'>('chatgpt');
+  const [chatGPTPair, setChatGPTPair] = useState('');
+  const [chatGPTReady, setChatGPTReady] = useState(false);
+  const [chatGPTAccounts, setChatGPTAccounts] = useState<ChatGPTAccount[]>([]);
+  const [chatGPTActiveId, setChatGPTActiveId] = useState('');
+  const [chatGPTModels, setChatGPTModels] = useState<ChatGPTModel[]>([]);
+  const [chatGPTModel, setChatGPTModel] = useState('');
+  const [chatGPTBusy, setChatGPTBusy] = useState<string | null>(null);
+  const [chatGPTFailure, setChatGPTFailure] = useState('');
   const [workerReady, setWorkerReady] = useState<boolean | null>(null);
   const [includeFile, setIncludeFile] = useState(false);
   const [includeProject, setIncludeProject] = useState(false);
@@ -142,6 +154,17 @@ export default function App() {
   useEffect(() => {
     void pingWorker().then(setWorkerReady);
   }, []);
+  // Poll only while the ChatGPT account manager is open. Tokens stay local.
+  useEffect(() => {
+    if (dialog !== 'chatgpt' || !chatGPTReady || !chatGPTPair) return;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      void getChatGPTAccounts(chatGPTPair).then(snapshot => {
+        if (!cancelled) { setChatGPTAccounts(snapshot.accounts); setChatGPTFailure(snapshot.lastFailure || ''); }
+      }).catch(() => { if (!cancelled) setChatGPTReady(false); });
+    }, 3000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [dialog, chatGPTReady, chatGPTPair]);
   useEffect(() => {
     const warn = (ev: BeforeUnloadEvent) => {
       if (dirty.length) { ev.preventDefault(); ev.returnValue = ''; }
@@ -313,13 +336,98 @@ export default function App() {
       setQuestion('Propón una mejora concreta de este archivo sin alterar las funciones existentes.');
     }
   }
+  async function pairChatGPT() {
+    if (!chatGPTPair.trim()) return;
+    setChatGPTBusy('pairing');
+    try {
+      if (!await companionHealth()) throw new Error('Inicia el componente local con node tools/chatgpt-companion/server.mjs');
+      const state = await getChatGPTAccounts(chatGPTPair);
+      setChatGPTAccounts(state.accounts);
+      setChatGPTReady(true);
+      setChatGPTFailure(state.lastFailure || '');
+      setAuthMode('chatgpt');
+      notify('Componente ChatGPT conectado. Puedes iniciar sesión con tu correo.');
+    } catch (error) {
+      setChatGPTReady(false);
+      setChatGPTFailure(error instanceof Error ? error.message : 'No se pudo conectar');
+    } finally { setChatGPTBusy(null); }
+  }
+  async function refreshChatGPT() {
+    if (!chatGPTPair) return;
+    setChatGPTBusy('refresh');
+    try {
+      const state = await getChatGPTAccounts(chatGPTPair);
+      setChatGPTAccounts(state.accounts);
+      setChatGPTFailure(state.lastFailure || '');
+      const selected = state.accounts.find(a => a.id === chatGPTActiveId);
+      if (selected && (!selected.connected || !selected.planAccess)) {
+        setChatGPTActiveId(''); setChatGPTModels([]); setChatGPTModel('');
+      }
+    } catch (error) {
+      setChatGPTFailure(error instanceof Error ? error.message : 'Error de conexión');
+      setChatGPTReady(false);
+    } finally { setChatGPTBusy(null); }
+  }
+  async function loginChatGPT(id?: string) {
+    if (!chatGPTReady) return;
+    // Create the popup synchronously from the click to avoid browser popup blocking.
+    const popup = window.open('about:blank', '_blank');
+    setChatGPTBusy('login');
+    try {
+      const url = await startChatGPTLogin(chatGPTPair, id);
+      if (popup) popup.location.replace(url);
+      else {
+        setChatGPTFailure('El navegador bloqueó la ventana. Autoriza las ventanas emergentes para continuar con ChatGPT.');
+        return;
+      }
+      setChatGPTFailure('');
+      log('Autorización de cuenta iniciada en la página oficial de OpenAI');
+    } catch (error) {
+      popup?.close();
+      setChatGPTFailure(error instanceof Error ? error.message : 'No se pudo iniciar OAuth');
+    } finally { setChatGPTBusy(null); }
+  }
+  async function selectChatGPT(id: string) {
+    setChatGPTBusy('models');
+    try {
+      const models = await getChatGPTModels(chatGPTPair, id);
+      if (!models.length) throw new Error('Esta cuenta no publicó modelos disponibles para uso del plan');
+      setChatGPTModels(models);
+      setChatGPTModel(models[0].id);
+      setChatGPTActiveId(id);
+      setAuthMode('chatgpt');
+      setChatGPTFailure('');
+      notify('Cuenta ChatGPT activa · ' + models.length + ' modelos disponibles');
+    } catch (error) {
+      setChatGPTFailure(error instanceof Error ? error.message : 'No se pudo seleccionar la cuenta');
+    } finally { setChatGPTBusy(null); }
+  }
+  async function disconnectChatGPT(id: string, remove: boolean) {
+    setChatGPTBusy('disconnect');
+    try {
+      const result = await disconnectChatGPTAccount(chatGPTPair, id, remove);
+      const state = await getChatGPTAccounts(chatGPTPair);
+      setChatGPTAccounts(state.accounts);
+      if (chatGPTActiveId === id) { setChatGPTActiveId(''); setChatGPTModels([]); setChatGPTModel(''); }
+      notify((remove ? 'Registro eliminado' : 'Sesión local cerrada') + (!result.revoked ? ' · La revocación remota no se confirmó' : ' · Acceso revocado'));
+    } catch (error) {
+      setChatGPTFailure(error instanceof Error ? error.message : 'No se pudo desconectar la cuenta');
+    } finally { setChatGPTBusy(null); }
+  }
   async function askAgent(e?: FormEvent) {
     e?.preventDefault();
     const prompt = question.trim();
     if (!prompt || agentBusy) return;
-    const route = chooseRoute(connections, priority, agentMode, prompt, selectedProfile, selectedModel);
-    if (!route) {
-      notify('Conecta una cuenta y descubre sus modelos en Conexiones', true);
+    const loginMode = authMode === 'chatgpt';
+    const route = loginMode ? null : chooseRoute(connections, priority, agentMode, prompt, selectedProfile, selectedModel);
+    const chatAccount = chatGPTAccounts.find(a => a.id === chatGPTActiveId);
+    if (loginMode && (!chatGPTReady || !chatAccount?.connected || !chatAccount.planAccess || !chatGPTModel)) {
+      notify('Inicia sesión con ChatGPT y elige un modelo disponible', true);
+      setDialog('chatgpt');
+      return;
+    }
+    if (!loginMode && !route) {
+      notify('Conecta un proveedor de API y sus modelos', true);
       setDialog('settings');
       return;
     }
@@ -327,7 +435,7 @@ export default function App() {
       notify('Abre un archivo local editable para proponer cambios', true);
       return;
     }
-    const path = active?.path || '';
+    const filepath = active?.path || '';
     const includeActive = !!active && (includeFile || agentMode === 'edit');
     const fileContext = includeActive && active ? active.text : '';
     const projectContext = includeProject && workspace
@@ -339,23 +447,24 @@ export default function App() {
     setQuestion('');
     setGuidance(null);
     setAgentBusy(true);
-    setLastRoute({ model: route.model.id, provider: route.connection.provider, profile: route.connection.label, reason: route.reason });
+    setLastRoute(route ? { model: route.model.id, provider: route.connection.provider, profile: route.connection.label, reason: route.reason } : null);
+    const selectedLabel = loginMode ? (chatAccount?.email || 'ChatGPT') : (route?.connection.label || 'modelo');
     try {
-      const result = await requestAgent({
-        provider: route.connection.provider,
-        model: route.model.id,
-        apiKey: route.connection.apiKey,
-        action: agentMode,
-        question: prompt,
-        project: projectContext,
-        path: includeActive ? path : '',
-        code: fileContext,
-        history
+      const result = loginMode ? await runChatGPT({
+        token: chatGPTPair, id: chatGPTActiveId, model: chatGPTModel,
+        action: agentMode, question: prompt, project: projectContext,
+        path: includeActive ? filepath : '', code: fileContext, history
+      }) : await requestAgent({
+        provider: route!.connection.provider,
+        model: route!.model.id,
+        apiKey: route!.connection.apiKey,
+        action: agentMode, question: prompt, project: projectContext,
+        path: includeActive ? filepath : '', code: fileContext, history
       });
       if (agentMode === 'edit') {
         if (typeof result.answer !== 'string' || !result.answer.trim()) throw new Error('El modelo no devolvió contenido válido');
-        setProposal({ path, next: result.answer, original: before });
-        setHistory(prev => [...prev, { role: 'assistant', content: 'Propuesta lista para ' + path + '. Revisa el diff antes de aplicar.', timestamp: Date.now() }]);
+        setProposal({ path: filepath, next: result.answer, original: before });
+        setHistory(prev => [...prev, { role: 'assistant', content: 'Propuesta lista para ' + filepath + '. Revisa el diff antes de aplicar.', timestamp: Date.now() }]);
       } else if (agentMode === 'guide') {
         const plan = result.guide || { summary: result.answer || 'Guía sin pasos', steps: [] };
         setGuidance(plan);
@@ -363,11 +472,11 @@ export default function App() {
       } else {
         setHistory(prev => [...prev, { role: 'assistant', content: result.answer || '', timestamp: Date.now() }]);
       }
-      log('Agente · ' + route.connection.label + ' / ' + route.model.id + ' · ' + (result.durationMs || 0) + ' ms', 'success');
+      log('Agente · ' + selectedLabel + ' / ' + (loginMode ? chatGPTModel : route!.model.id), 'success');
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Fallo de conexión';
-      setHistory(prev => [...prev, { role: 'assistant', content: 'Error: ' + msg + (msg.includes('429') ? ' Revisa la cuota en el proveedor.' : ''), timestamp: Date.now() }]);
-      log('Agente (' + route.connection.label + '): ' + msg, 'error');
+      setHistory(prev => [...prev, { role: 'assistant', content: 'Error: ' + msg, timestamp: Date.now() }]);
+      log('Agente (' + selectedLabel + '): ' + msg, 'error');
     } finally {
       setAgentBusy(false);
     }
@@ -425,7 +534,8 @@ export default function App() {
     { title: 'Abrir repositorio GitHub', detail: 'Explorar código público', icon: Github, action: () => setDialog('github') },
     { title: 'Guardar archivo', detail: 'Ctrl+S', icon: Save, action: () => { setDialog(null); if (activePath) void saveDoc(activePath); } },
     { title: 'Nuevo archivo', detail: 'Crear en el proyecto local', icon: FilePlus2, action: () => setDialog('new') },
-    { title: 'Conectar modelo de IA', detail: 'Clave de API temporal', icon: Bot, action: () => setDialog('settings') },
+    { title: 'Conectar ChatGPT con correo', detail: 'OAuth oficial, sin clave API', icon: Bot, action: () => {setAuthMode('chatgpt');setDialog('chatgpt');} },
+    { title: 'Conectar modelo de IA con API', detail: 'Clave API temporal', icon: Bot, action: () => {setAuthMode('api');setDialog('settings');} },
     { title: 'Terminal local', detail: 'Conectar Core Local Bridge', icon: SquareTerminal, action: () => setDialog('bridge') },
     { title: 'Mostrar cambios', detail: 'Archivos con modificaciones pendientes', icon: CircleDot, action: () => { setSection('changes'); setSidebarOpen(true); setDialog(null); } },
     ...allFiles.slice(0, 100).map(n => ({ title: n.name, detail: n.path, icon: FileCode2, action: () => { setDialog(null); void openNode(n); } }))
@@ -439,7 +549,7 @@ export default function App() {
       <button className="top-search" onClick={() => setDialog('commands')}><Search size={15}/><span>Buscar archivos, proyectos o acciones</span><kbd>Ctrl K</kbd></button>
       <div className="title-actions">
         <span className={'api-status ' + (workerReady ? 'online' : workerReady === false ? 'offline' : '')}><span className="status-orb"/>{workerReady ? 'Worker conectado' : workerReady === false ? 'Worker desconectado' : 'Conectando...'}</span>
-        <button className="icon-button hide-small" title="Conexiones de modelos" onClick={() => setDialog('settings')}><Settings2 size={16}/></button>
+        <button className="icon-button hide-small" title="Conexiones de modelos" onClick={() => setDialog(authMode === 'chatgpt' ? 'chatgpt' : 'settings')}><Settings2 size={16}/></button>
         <button className="icon-button" title={agentOpen ? 'Ocultar agente' : 'Mostrar agente'} onClick={() => setAgentOpen(v => !v)}>{agentOpen ? <PanelRightClose size={17}/> : <PanelRightOpen size={17}/>}</button>
       </div>
     </div>
@@ -458,7 +568,7 @@ export default function App() {
         </div>
         <div className="rail-group rail-bottom">
           <button title="Terminal" className="rail-button" onClick={() => { setBottomOpen(true); setBottomTab('terminal'); }}><SquareTerminal size={20}/></button>
-          <button title="Conexiones" className="rail-button" onClick={() => setDialog('settings')}><Settings2 size={20}/></button>
+          <button title="Conexiones" className="rail-button" onClick={() => setDialog(authMode === 'chatgpt' ? 'chatgpt' : 'settings')}><Settings2 size={20}/></button>
         </div>
       </nav>
 
@@ -521,9 +631,9 @@ export default function App() {
             <div className="welcome">
               <div className="welcome-center"><BrandMark size="large"/><div className="welcome-eyebrow">EL ESPACIO DE DESARROLLO DE ALICELABS</div>
                 <h1>Construye con <span>claridad.</span></h1><p>Tu código, tus herramientas y tus agentes. Un espacio diseñado para trabajar, no para mostrar paneles vacíos.</p>
-                <div className="welcome-actions"><button className="primary-button" disabled={busyWorkspace} onClick={() => void openLocal()}>{busyWorkspace ? <LoaderCircle size={16} className="spin"/> : <FolderOpen size={16}/>} Abrir carpeta local</button><button className="secondary-button" onClick={() => setDialog('github')}><Github size={16}/> Explorar GitHub</button></div>
+                <div className="welcome-actions"><button className="primary-button" disabled={busyWorkspace} onClick={() => void openLocal()}>{busyWorkspace ? <LoaderCircle size={16} className="spin"/> : <FolderOpen size={16}/>} Abrir carpeta local</button><button className="secondary-button" onClick={() => setDialog('github')}><Github size={16}/> Explorar GitHub</button><button className="secondary-button" onClick={() => {setAuthMode('chatgpt');setDialog('chatgpt');}}><Bot size={16}/> Conectar ChatGPT</button></div>
                 <div className="welcome-shortcuts"><span><kbd>Ctrl</kbd> + <kbd>K</kbd> Paleta de acciones</span><span><kbd>Ctrl</kbd> + <kbd>S</kbd> Guardar</span></div>
-              </div><div className="welcome-grid"/><div className="welcome-version">CORE / RESIDENT WORKSPACE v0.3</div>
+              </div><div className="welcome-grid"/><div className="welcome-version">CORE / CHATGPT WORKSPACE v0.4</div>
             </div>}
         </div>
         {bottomOpen && <section className="bottom-panel">
@@ -537,33 +647,35 @@ export default function App() {
       </main>
 
       {agentOpen && <><div className="resize-grip" onPointerDown={resizeAgent} title="Arrastra para cambiar el ancho"/><aside className="agent-pane">
-        <div className="agent-heading"><div className="agent-identity"><div className="agent-avatar"><Sparkles size={18}/></div><div><strong>Core Agent</strong><span>ASISTENTE DE DESARROLLO</span></div></div><button className="icon-button" title="Ajustes de IA" onClick={() => setDialog('settings')}><Settings2 size={16}/></button></div>
-        <div className="agent-model-row"><div className="agent-model"><span className={routePreview ? 'connected-dot':'unconnected-dot'}/><span>{routePreview ? routePreview.connection.label : 'Sin cuenta conectada'}</span><span className="agent-model-short">{routePreview ? routePreview.model.id : 'Conectar modelos'}</span></div><button onClick={() => setDialog('settings')} title="Rutas, modelos y cuentas"><ChevronDown size={15}/></button></div>
-        <button className="route-banner" onClick={() => setDialog('settings')} title={routePreview?.reason || 'Conecta un proveedor para descubrir modelos'}>
-          <Sparkles size={13}/> {routePreview ? 'Auto · ' + priority + ' · ' + routePreview.considered + ' modelos evaluados' : 'Conecta una cuenta para activar el agente'} <ArrowRight size={12}/>
+        <div className="agent-heading"><div className="agent-identity"><div className="agent-avatar"><Sparkles size={18}/></div><div><strong>Core Agent</strong><span>ASISTENTE DE DESARROLLO</span></div></div><button className="icon-button" title="Ajustes de IA" onClick={() => setDialog(authMode==='chatgpt'?'chatgpt':'settings')}><Settings2 size={16}/></button></div>
+        <div className="agent-auth-modes"><button className={authMode==='chatgpt'?'mode-current':''} onClick={() => setAuthMode('chatgpt')}><Bot size={13}/> ChatGPT con correo</button><button className={authMode==='api'?'mode-current':''} onClick={() => setAuthMode('api')}><LockKeyhole size={13}/> API</button></div>
+        <div className="agent-model-row"><div className="agent-model"><span className={authMode==='chatgpt'?(chatGPTActiveId && chatGPTReady?'connected-dot':'unconnected-dot'):(routePreview?'connected-dot':'unconnected-dot')}/><span>{authMode==='chatgpt'?(chatGPTAccounts.find(a=>a.id===chatGPTActiveId)?.email || 'ChatGPT sin conectar'):(routePreview ? routePreview.connection.label : 'Sin cuenta API')}</span><span className="agent-model-short">{authMode==='chatgpt'?(chatGPTModel || 'Iniciar sesión'):(routePreview ? routePreview.model.id : 'Conectar modelos')}</span></div><button onClick={() => setDialog(authMode==='chatgpt'?'chatgpt':'settings')} title="Rutas, modelos y cuentas"><ChevronDown size={15}/></button></div>
+        <button className="route-banner" onClick={() => setDialog(authMode==='chatgpt'?'chatgpt':'settings')} title={authMode==='chatgpt'?'Cuenta seleccionada manualmente · OAuth oficial':routePreview?.reason || 'Conecta un proveedor para descubrir modelos'}>
+          <Sparkles size={13}/> {authMode==='chatgpt'?(chatGPTActiveId?'ChatGPT · cuenta autorizada · sin API key':'Continuar con ChatGPT · correo, sin API key'):(routePreview?'Auto · '+priority+' · '+routePreview.considered+' modelos evaluados':'Conecta una cuenta API')} <ArrowRight size={12}/>
         </button>
         <div className="agent-thread">
           {!history.length && <div className="agent-starter"><div className="agent-star"><WandSparkles size={24}/></div><h2>Tu IA residente, a tu lado.</h2><p>{workspace ? 'Proyecto ' + workspace.name + ' preparado. Puedo guiarte, explicar el archivo abierto o proponerte una edición que revisarás.' : 'Puedo acompañarte desde abrir un proyecto hasta revisar el código, sin inventar acciones ni ejecutar comandos sin permiso.'}</p><div className="agent-suggestions"><button onClick={() => { setAgentMode('guide'); setQuestion('Guíame paso a paso para comenzar a trabajar con mi proyecto en AliceLabs Core.'); }}>Guíame en el IDE <ArrowRight size={13}/></button><button onClick={() => { setAgentMode('chat'); setQuestion('Explícame la arquitectura del archivo abierto y cómo mejorarla.'); }}>Explicar código <ArrowRight size={13}/></button><button onClick={() => { setAgentMode('edit'); setQuestion('Refactoriza este archivo para mejorar calidad y legibilidad sin cambiar su comportamiento.'); }}>Refactorizar archivo <ArrowRight size={13}/></button></div></div>}
           {history.map((m,i) => <div key={i} className={'chat-message '+m.role}><div className="chat-author">{m.role==='user'?'Tú':'CORE AGENT'}<span>{new Date(m.timestamp).toLocaleTimeString('es-EC',{hour:'2-digit',minute:'2-digit'})}</span></div><div className="chat-text">{m.content}</div></div>)}
-          {agentBusy && <div className="agent-thinking"><LoaderCircle size={15} className="spin"/> Consultando {lastRoute?.profile || 'modelo'}...</div>}
+          {agentBusy && <div className="agent-thinking"><LoaderCircle size={15} className="spin"/> Consultando {authMode==='chatgpt'?(chatGPTAccounts.find(a=>a.id===chatGPTActiveId)?.email||'ChatGPT'):(lastRoute?.profile||'modelo')}...</div>}
           {guidance && <div className="guide-plan"><div className="guide-plan-title"><Bot size={16}/> Plan de trabajo <span>{guidance.steps.length} pasos</span></div>{guidance.steps.map((step,i) => <div className="guide-step" key={i}><div className="guide-step-number">{i+1}</div><div className="guide-step-body"><strong>{step.title}</strong><p>{step.description}</p>{step.action && <button onClick={() => runGuideStep(step.action)}>Abrir acción <ArrowRight size={12}/></button>}</div></div>)}</div>}
           {proposal && <div className="proposal-card"><div className="proposal-header"><CheckCircle2 size={16}/><strong>Propuesta preparada</strong></div><div className="proposal-path">{proposal.path}</div><div className="proposal-stats"><span>{proposal.original.split('\n').length} líneas actuales</span><ArrowRight size={13}/><span>{proposal.next.split('\n').length} propuestas</span></div><p>El cambio no se aplicará sin tu aprobación. Luego podrás guardarlo.</p><div className="proposal-actions"><button onClick={() => setProposal(null)} className="secondary-button">Descartar</button><button onClick={() => setDialog('diff')} className="secondary-button"><Code2 size={14}/> Revisar diff</button><button onClick={applyProposal} className="primary-button"><Check size={14}/> Aplicar al editor</button></div></div>}
         </div>
         <div className="agent-compose">
           <div className="composer-tabs"><button className={agentMode==='chat'?'mode-active':''} onClick={() => setAgentMode('chat')}><MessageSquareText size={13}/> Preguntar</button><button className={agentMode==='edit'?'mode-active':''} onClick={() => setAgentMode('edit')}><Code2 size={13}/> Editar</button><button className={agentMode==='guide'?'mode-active':''} onClick={() => setAgentMode('guide')}><Bot size={13}/> Guía</button></div>
           <form onSubmit={askAgent} className="compose-box"><textarea rows={3} value={question} onChange={e => setQuestion(e.target.value)} onKeyDown={e => { if (e.key==='Enter' && !e.shiftKey) {e.preventDefault(); void askAgent();} }} placeholder={agentMode==='edit'?'Describe el cambio que quieres aplicar...':agentMode==='guide'?'¿Qué quieres hacer? Te guiaré paso a paso.':'Pregunta sobre tu código o proyecto...'} disabled={agentBusy}/><div className="compose-bottom"><div className="context-options"><label className="file-context-toggle"><input type="checkbox" checked={agentMode==='edit' || includeFile} onChange={e=>setIncludeFile(e.target.checked)} disabled={agentMode==='edit' || !active}/><span>{agentMode==='edit' ? 'Archivo activo' : 'Archivo'}</span></label><label className="file-context-toggle"><input type="checkbox" checked={includeProject} onChange={e=>setIncludeProject(e.target.checked)} disabled={!workspace}/><span>Mapa proyecto</span></label></div><button className="send-button" type="submit" disabled={agentBusy || !question.trim()} title="Enviar al agente">{agentBusy ? <LoaderCircle size={17} className="spin"/> : <ArrowRight size={18}/>}</button></div></form>
-          <div className="agent-disclaimer"><ShieldCheck size={12}/> Cuentas solo en memoria · Sin rotación para eludir bloqueos · Revisa cuotas</div>
+          <div className="agent-disclaimer"><ShieldCheck size={12}/> {authMode==='chatgpt'?'Autorización oficial · credenciales solo en el compañero local':'Claves API solo en memoria'} · Sin evasión de límites</div>
         </div>
       </aside></>}
     </div>
     <footer className="statusbar"><div className="status-left"><span className="status-highlight"><BrandMark/> Core</span><button onClick={() => setSection('activity')}><Activity size={12}/> {logs[0]?.level === 'error' ? 'Revisar evento' : 'Listo'}</button><span className="status-divider"/><span>{workspace?.kind === 'github' ? <Github size={12}/> : <HardDrive size={12}/>} {workspace?.name || 'Sin proyecto'}</span></div><div className="status-right">{active && <><span>{active.language}</span><span>{active.text.split('\n').length} líneas</span><span>{active.readOnly?'Lectura':'Editable'}</span></>}<button title="Mostrar terminal" onClick={()=>{setBottomOpen(true);setBottomTab('terminal');}}><SquareTerminal size={13}/></button><span>UTF-8</span></div></footer>
     {toast && <div className="toast" role="status"><CircleDot size={15}/>{toast}<button onClick={()=>setToast('')}><X size={14}/></button></div>}
-    {dialog && <div className="modal-backdrop" onMouseDown={e => {if(e.target===e.currentTarget)setDialog(null);}}><div className={'dialog '+(dialog==='commands'?'command-dialog':dialog==='diff'?'diff-dialog':dialog==='settings'?'settings-dialog':'')} role="dialog" aria-modal="true">
+    {dialog && <div className="modal-backdrop" onMouseDown={e => {if(e.target===e.currentTarget)setDialog(null);}}><div className={'dialog '+(dialog==='commands'?'command-dialog':dialog==='diff'?'diff-dialog':dialog==='settings'?'settings-dialog':dialog==='chatgpt'?'chatgpt-dialog':'')} role="dialog" aria-modal="true">
       {dialog==='diff' && proposal ? <><div className="dialog-top"><div><span className="dialog-eyebrow">REVISIÓN DE CAMBIOS</span><h3>{proposal.path}</h3></div><button className="dialog-close" onClick={()=>setDialog(null)}><X size={18}/></button></div><div className="diff-body"><DiffEditor original={proposal.original} modified={proposal.next} language={languageOf(proposal.path)} theme="vs-dark" options={{ readOnly: true, automaticLayout:true, minimap:{enabled:false}, fontSize:12, renderSideBySide: true, scrollBeyondLastLine:false }} /></div><div className="dialog-actions diff-actions"><button className="secondary-button" onClick={()=>setDialog(null)}>Volver</button><button className="primary-button" onClick={()=>{applyProposal();setDialog(null);}}><Check size={14}/> Aplicar al editor</button></div></> : dialog==='commands' ? <><div className="command-input"><Search size={19}/><input autoFocus placeholder="Escribe una acción o un archivo..." value={commandFilter} onChange={e=>setCommandFilter(e.target.value)}/><kbd>ESC</kbd></div><div className="command-list">{visibleCommands.map((item,i)=><button key={i} onClick={item.action}><item.icon size={17}/><div><strong>{item.title}</strong><small>{item.detail}</small></div><ArrowRight size={14}/></button>)}</div><div className="command-footer"><Keyboard size={13}/> Acciones y archivos del proyecto</div></>
-      : <><div className="dialog-top"><div><span className="dialog-eyebrow">ALICELABS CORE</span><h3>{dialog==='github'?'Abrir repositorio GitHub':dialog==='new'?'Nuevo archivo':dialog==='settings'?'Cuentas y modelos inteligentes':'Conectar terminal local'}</h3></div><button className="dialog-close" onClick={()=>setDialog(null)}><X size={18}/></button></div>
+      : <><div className="dialog-top"><div><span className="dialog-eyebrow">ALICELABS CORE</span><h3>{dialog==='github'?'Abrir repositorio GitHub':dialog==='new'?'Nuevo archivo':dialog==='settings'?'Cuentas API y modelos':dialog==='chatgpt'?'Conectar cuentas ChatGPT':'Conectar terminal local'}</h3></div><button className="dialog-close" onClick={()=>setDialog(null)}><X size={18}/></button></div>
         {dialog==='github' && <form onSubmit={openGithub} className="dialog-content"><p>Explora cualquier repositorio público de GitHub, con árbol de archivos y editor en modo lectura. Para editar y guardar, abre una carpeta local.</p><label>URL del repositorio</label><div className="input-with-icon"><Github size={16}/><input autoFocus placeholder="https://github.com/usuario/repositorio" value={githubURL} onChange={e=>setGithubURL(e.target.value)}/></div><div className="dialog-actions"><button type="button" className="secondary-button" onClick={()=>setDialog(null)}>Cancelar</button><button type="submit" className="primary-button" disabled={busyWorkspace||!githubURL.trim()}>{busyWorkspace?<LoaderCircle size={15} className="spin"/>:<ArrowRight size={15}/>} Abrir repositorio</button></div></form>}
         {dialog==='new' && <form onSubmit={createNew} className="dialog-content"><p>Crea un archivo en la carpeta local. Puedes indicar subcarpetas con /.</p><label>Nombre o ruta</label><div className="input-with-icon"><FilePlus2 size={16}/><input autoFocus placeholder="src/components/Nuevo.tsx" value={newPath} onChange={e=>setNewPath(e.target.value)}/></div><div className="dialog-actions"><button className="secondary-button" type="button" onClick={()=>setDialog(null)}>Cancelar</button><button className="primary-button" disabled={!newPath.trim()}>Crear archivo</button></div></form>}
         {dialog==='settings' && <div className="dialog-content connection-manager">
+          <button className="siwc-link" onClick={() => {setAuthMode('chatgpt');setDialog('chatgpt');}}><Bot size={17}/><span><strong>Iniciar sesión con ChatGPT</strong><small>Con correo, sin clave API · conexiones múltiples</small></span><ArrowRight size={16}/></button>
           <p>Conecta varias claves API, incluso del mismo proveedor. Cada perfil se verifica contra su API y descubre sus modelos. Las claves viven <strong>solo en esta pestaña</strong>; no se guardan en disco ni en Cloudflare.</p>
           <div className="route-controls">
             <label>Prioridad del agente<select value={priority} onChange={e => setPriority(e.target.value as Priority)}><option value="balanced">Equilibrada · recomendada</option><option value="quality">Máxima calidad aproximada</option><option value="economy">Economía y velocidad</option></select></label>
@@ -589,6 +701,15 @@ export default function App() {
           <div className="info-note"><ShieldCheck size={17}/><span>Las cuentas no se cambian automáticamente ante errores 401 o 429; elige otra solo si sus reglas lo permiten. No se crean proxies, identidades falsas ni fingerprints. El agente usa los modelos disponibles en las conexiones que agregues.</span></div>
           <div className="dialog-actions"><button className="secondary-button" onClick={()=>setDialog(null)}>Cerrar</button></div>
         </div>}
+        {dialog==='chatgpt' && <ChatGPTPanel
+          pairToken={chatGPTPair} setPairToken={setChatGPTPair}
+          online={chatGPTReady} accounts={chatGPTAccounts} activeId={chatGPTActiveId}
+          models={chatGPTModels} model={chatGPTModel} setModel={setChatGPTModel}
+          failure={chatGPTFailure} busy={chatGPTBusy}
+          onPair={pairChatGPT} onLogin={loginChatGPT} onSelect={selectChatGPT}
+          onRefresh={refreshChatGPT} onDisconnect={disconnectChatGPT}
+          onClose={() => setDialog(null)}
+        />}
         {dialog==='bridge' && <form onSubmit={connectBridge} className="dialog-content"><p>Para ejecutar comandos necesitas Core Local Bridge en tu propio equipo. Abre la terminal en la carpeta del repositorio y ejecuta:</p><div className="command-snippet"><code>node tools/local-bridge/server.mjs</code><button type="button" onClick={()=>void navigator.clipboard.writeText('node tools/local-bridge/server.mjs')} title="Copiar"><Copy size={15}/></button></div><p>El Bridge mostrará un token de sesión. Cada comando solicitará autorización en esa terminal.</p><label>Token de emparejamiento local</label><div className="input-with-icon"><LockKeyhole size={16}/><input type="password" autoFocus value={bridgeToken} onChange={e=>setBridgeToken(e.target.value)} placeholder="Pega el token que aparece en tu terminal"/></div><div className="dialog-actions"><button type="button" className="secondary-button" onClick={()=>setDialog(null)}>Cancelar</button><button className="primary-button" type="submit" disabled={!bridgeToken.trim()}><Wifi size={15}/> Conectar</button></div></form>}
         </>}
     </div></div>}
