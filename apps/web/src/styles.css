@@ -407,3 +407,13 @@
 .github-pr-file button span{overflow-wrap:anywhere}
 .github-pr-file pre{font-size:11px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto;max-height:270px;padding:9px;border:1px solid var(--border,#3d4450);border-radius:7px}
 .github-pr-review-confirm{display:flex;gap:8px;align-items:flex-start;font-size:12px}
+
+/* Reviewed multi-file coding team and per-file change confirmation */
+.batch-file-tabs{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:10px 14px;border-bottom:1px solid var(--border,#3b414e);max-height:96px;overflow:auto}
+.batch-file-tabs button{border:1px solid var(--border,#404955);border-radius:6px;color:inherit;background:transparent;font-size:11px;padding:7px 9px;cursor:pointer;text-align:left;overflow-wrap:anywhere}
+.batch-file-tabs button.selected{border-color:var(--accent,#90b9f2);background:var(--surface-raised,rgba(128,155,200,.12))}
+.batch-review-confirm{display:flex;gap:9px;align-items:center;padding:9px 14px;font-size:12px}
+.batch-review-confirm input{flex:0 0 auto}
+.diff-actions{flex-wrap:wrap}
+.diff-actions a{font-size:12px;color:var(--accent,#8fc1ff);text-decoration:underline;overflow-wrap:anywhere}
+@media(max-width:900px){.batch-file-tabs{max-height:110px}.batch-review-confirm{font-size:11px}.diff-actions{gap:7px}}
