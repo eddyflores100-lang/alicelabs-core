@@ -57,3 +57,18 @@ Core CI ejecuta estas pruebas junto con el resto de pruebas existentes.
 ## Archivo grande: edición por líneas
 
 Los archivos de más de 12 KB (por ejemplo apps/web/src/App.tsx) deben seleccionar un rango como apps/web/src/App.tsx#L100-L180. La selección incluye hasta 200 líneas y como máximo 12 KB. Solo el fragmento se envía al modelo. El agente conserva intacto el resto, comprueba el contenido original antes de escribir y bloquea modificaciones concurrentes. Los otros archivos del lote pueden indicar rutas normales. No se permite alterar rutas externas ni archivos de configuración de GitHub Actions.
+
+## Instalación en otros repositorios GitHub
+
+Core Autopilot se instala por repositorio desde Core Web o Android, en la sección GitHub Actions:
+
+1. Abre el repositorio de destino con un token GitHub con Contents: Read and write, Workflows: Read and write, Issues: Write y Variables: Write. Para crear PR también hacen falta los permisos habituales de Pull requests.
+2. En Autopilot pulsa Instalar workflow del autopiloto. Core solicita confirmación antes de escribir .github/workflows/alicelabs-core-autopilot.yml en la rama principal. Si ya existe un archivo ajeno con ese nombre, no lo sobrescribe.
+3. La instalación incluye el cron cada cinco minutos, pero por defecto no inicia ningún trabajo pagado. El workflow apunta a un commit SHA fijo de AliceLabs Core y pasa el mismo SHA al motor de programación, evitando cambios silenciosos en el código que recibe la clave.
+4. Configura el secreto CORE_AGENT_API_KEY en la sección Actions de ese repositorio. Después añade tareas aprobadas como Issues y activa el autopiloto con un límite de 1 a 3 tareas al día.
+5. Las tareas se ejecutan en runners del repositorio de destino, aunque cierres la web. Los PR generados requieren revisión humana. Los workflows programados pueden sufrir demoras de GitHub.
+6. Para actualizar la versión fijada usa Actualizar workflow fijado; esa acción exige otra confirmación. Desactiva primero el autopiloto y usa Desinstalar workflow para retirar únicamente su archivo administrado, con verificación de SHA.
+
+**Privacidad y costes:** cada repositorio conserva sus propios tokens, secretos, Issues y PR. No se copian al repositorio de Core. El uso de GitHub Actions y del proveedor de IA puede generar consumo. El límite diario controla cantidad de tareas, no dólares. No se ejecuta inferencia sin clave configurada y dos variables de activación.
+
+**Limitaciones:** la escritura directa del archivo de workflow puede estar bloqueada por las reglas de protección de rama de GitHub. La aplicación informa ese bloqueo; no intenta eludirlo. La instalación puede requerir permisos Workflows: Write adicionales.

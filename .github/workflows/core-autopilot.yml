@@ -1,21 +1,30 @@
 name: Core Autopilot (opt-in)
 
-# GitHub cron may be delayed or skipped. A new run never interrupts the old one.
+# Runs only approved work and never merges automatically.
 on:
   schedule:
     - cron: '*/5 * * * *'
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      engine_sha:
+        description: Pinned AliceLabs Core commit used for all code execution
+        required: true
+        type: string
+    secrets:
+      CORE_AGENT_API_KEY:
+        required: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: core-autopilot-queue
+  group: core-autopilot-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
   claim:
-    name: Pick one explicitly approved coding issue
+    name: Reserve one approved task
     if: ${{ vars.CORE_AUTOPILOT_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 4
@@ -29,11 +38,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          repository: eddyflores100-lang/alicelabs-core
+          ref: ${{ inputs.engine_sha || github.sha }}
+          path: .alice-core-agent
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: "24"
-      - name: Check paid coding opt-in and required provider credential
+          node-version: '24'
+      - name: Check opt-in and provider credential
         id: gate
         env:
           CODING_ENABLED: ${{ vars.CORE_AUTOPILOT_CODING_ENABLED }}
@@ -44,33 +56,110 @@ jobs:
             echo 'ready=true' >> "$GITHUB_OUTPUT"
           else
             echo 'ready=false' >> "$GITHUB_OUTPUT"
-            echo 'Paid coding is not enabled or CORE_AGENT_API_KEY is missing.'
+            echo 'Coding remains off until explicitly enabled and configured.'
           fi
-      - name: Reserve approved Issue with daily limit
+      - name: Reserve approved Issue with daily cap
         id: queue
         if: steps.gate.outputs.ready == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           CORE_AUTOPILOT_DAILY_LIMIT: ${{ vars.CORE_AUTOPILOT_DAILY_LIMIT || '2' }}
-        run: node tools/core-autopilot-queue.mjs claim
+        run: node .alice-core-agent/tools/core-autopilot-queue.mjs claim
 
   coder:
-    name: Run isolated multi-agent coding workflow
+    name: Create reviewed PR with pinned Core engine
     needs: claim
     if: ${{ needs.claim.outputs.issue != '' }}
-    uses: ./.github/workflows/core-cloud-coder.yml
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
       pull-requests: write
-    with:
-      goal: ${{ needs.claim.outputs.goal }}
-      files: ${{ needs.claim.outputs.files }}
-    secrets:
-      CORE_AGENT_API_KEY: ${{ secrets.CORE_AGENT_API_KEY }}
+    outputs:
+      branch: ${{ steps.agent.outputs.core_branch }}
+      pr: ${{ steps.agent.outputs.core_pr }}
+    steps:
+      - name: Checkout target repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Checkout pinned Core code
+        uses: actions/checkout@v4
+        with:
+          repository: eddyflores100-lang/alicelabs-core
+          ref: ${{ inputs.engine_sha || github.sha }}
+          path: .alice-core-agent
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Run bounded planner, coder and reviewer
+        id: agent
+        env:
+          CORE_TASK_GOAL: ${{ needs.claim.outputs.goal }}
+          CORE_TASK_FILES: ${{ needs.claim.outputs.files }}
+          CORE_AGENT_API_KEY: ${{ secrets.CORE_AGENT_API_KEY }}
+          CORE_AGENT_PROVIDER: ${{ vars.CORE_AGENT_PROVIDER || 'openai' }}
+          CORE_AGENT_MODEL: ${{ vars.CORE_AGENT_MODEL || 'gpt-4.1-mini' }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REF_NAME: ${{ github.event.repository.default_branch }}
+        run: node --experimental-strip-types .alice-core-agent/tools/cloud-code-agent.mjs
+      - name: Summarize PR for owner review
+        if: success()
+        env:
+          CORE_PR_URL: ${{ steps.agent.outputs.core_pr }}
+        run: |
+          echo '## AliceLabs Core Autopilot' >> "$GITHUB_STEP_SUMMARY"
+          echo "PR for review: $CORE_PR_URL" >> "$GITHUB_STEP_SUMMARY"
+          echo 'No model-generated source was executed in the credential-bearing job.' >> "$GITHUB_STEP_SUMMARY"
+
+  verify-core:
+    name: Verify generated Core branch without provider secrets
+    needs: coder
+    if: ${{ needs.coder.outputs.branch != '' && github.repository == 'eddyflores100-lang/alicelabs-core' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.coder.outputs.branch }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build Core web app
+        run: pnpm web:build
+      - name: Verify routing and provider APIs
+        run: pnpm test:web && pnpm test:worker
+      - name: Verify remote isolation
+        run: pnpm --filter @core/remote test && pnpm --filter @core/remote check
+      - name: Verify all web and code-agent logic
+        run: >-
+          node --experimental-strip-types --test
+          apps/web/test-vault.mjs
+          apps/web/test-agent-team.mjs
+          apps/web/test-owner-grants.mjs
+          apps/web/test-github-workspace.mjs
+          apps/web/test-github-actions.mjs
+          apps/web/test-github-pull-requests.mjs
+          apps/web/test-multifile-team.mjs
+          apps/web/test-github-batch-pr.mjs
+          apps/web/test-github-autopilot.mjs
+          apps/web/test-github-autopilot-install.mjs
+          tools/cloud-code-agent.test.mjs
+          tools/core-autopilot-queue.test.mjs
 
   report:
-    name: Record result for owner review
-    needs: [claim,coder]
+    name: Record review or failure on approved Issue
+    needs: [claim, coder, verify-core]
     if: ${{ always() && needs.claim.outputs.issue != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 4
@@ -80,14 +169,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          repository: eddyflores100-lang/alicelabs-core
+          ref: ${{ inputs.engine_sha || github.sha }}
+          path: .alice-core-agent
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: "24"
-      - name: Mark Issue for manual review or failure
+          node-version: '24'
+      - name: Mark Issue for human review only after applicable checks
         env:
           GITHUB_TOKEN: ${{ github.token }}
           CORE_AUTOPILOT_ISSUE: ${{ needs.claim.outputs.issue }}
-          CORE_AUTOPILOT_RESULT: ${{ needs.coder.result }}
+          CORE_AUTOPILOT_RESULT: ${{ needs.coder.result == 'success' && (needs.verify-core.result == 'success' || needs.verify-core.result == 'skipped') && 'success' || 'failure' }}
           CORE_AUTOPILOT_PR: ${{ needs.coder.outputs.pr }}
-        run: node tools/core-autopilot-queue.mjs finish
+        run: node .alice-core-agent/tools/core-autopilot-queue.mjs finish
